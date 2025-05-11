@@ -6,77 +6,91 @@ Pixora AI is a video generation platform that uses AI to create videos from text
 
 ```
 pixora-ai/
-├── src/                  # Frontend source code (React, TypeScript)
-│   ├── components/       # Reusable UI components
-│   ├── context/          # React context providers
-│   ├── hooks/            # Custom React hooks
-│   ├── interfaces/       # TypeScript interfaces
-│   ├── pages/            # Application pages
-│   ├── services/         # API services
-│   ├── store/            # State management (Zustand)
-│   └── utils/            # Utility functions
+├── client/              # Frontend code (React, TypeScript)
+│   ├── src/             # Frontend source code
+│   │   ├── components/  # Reusable UI components
+│   │   ├── context/     # React context providers
+│   │   ├── hooks/       # Custom React hooks
+│   │   ├── interfaces/  # TypeScript interfaces
+│   │   ├── pages/       # Application pages
+│   │   ├── services/    # API services
+│   │   ├── store/       # State management (Zustand)
+│   │   └── utils/       # Utility functions
+│   ├── public/          # Static assets
+│   └── dist/            # Build output (generated)
 │
-├── new_backend/          # New backend code (FastAPI)
-│   ├── app/              # Application code
-│   │   ├── core/         # Core functionality
-│   │   ├── routers/      # API endpoints
-│   │   ├── schemas/      # Pydantic models
-│   │   ├── services/     # Business logic
-│   │   └── utils/        # Utility functions
-│   └── tests/            # Unit and integration tests
+├── backend/             # Backend code (FastAPI)
+│   ├── app/             # Application code
+│   │   ├── ai/          # AI-related functionality
+│   │   ├── auth/        # Authentication
+│   │   ├── core/        # Core functionality
+│   │   ├── models/      # Data models
+│   │   ├── routers/     # API endpoints
+│   │   ├── schemas/     # Pydantic models
+│   │   ├── services/    # Business logic
+│   │   └── utils/       # Utility functions
+│   ├── db/              # Database migrations and schema
+│   └── storage/         # Storage for uploaded files
 │
-├── archived_code/        # Archived code (for reference)
-│   ├── backend/          # Old backend code
-│   └── frontend/         # Unused frontend code
-│
-└── scripts/              # Utility scripts
-    ├── analyze_frontend.js  # Script to analyze frontend code
-    ├── cleanup_backend.sh   # Script to clean up backend code
-    └── cleanup_project.sh   # Script to clean up the entire project
+└── docs/                # Documentation
 ```
 
-## Getting Started
+## Development
 
 ### Frontend
 
-1. Install dependencies:
-   ```
-   npm install
-   ```
-
-2. Start the development server:
-   ```
-   npm run dev
-   ```
-
-3. Open [http://localhost:5173](http://localhost:5173) in your browser.
+```bash
+cd client
+npm install
+npm run dev
+```
 
 ### Backend
 
-1. Create a virtual environment:
-   ```
-   cd new_backend
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate  # On Windows: venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your configuration
+python run.py
+```
 
-2. Install dependencies:
-   ```
-   pip install -r requirements.txt
-   ```
+### Full Stack Development
 
-3. Set up environment variables:
-   ```
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
+To run both frontend and backend together:
 
-4. Run the development server:
-   ```
-   uvicorn app.main:app --reload
-   ```
+```bash
+npm run dev
+```
 
-5. Open [http://localhost:8000/api/docs](http://localhost:8000/api/docs) to view the API documentation.
+## Deployment
+
+This project is set up for deployment to:
+- Frontend: Vercel
+- Backend: Render
+
+### Vercel Deployment (Frontend)
+
+1. Connect your GitHub repository to Vercel
+2. Select the repository and configure:
+   - Root Directory: `/` (the repository root)
+   - Build Command: Vercel will use the one in vercel.json
+   - Output Directory: Vercel will use the one in vercel.json
+3. Add environment variables as needed
+4. Deploy
+
+### Render Deployment (Backend)
+
+1. Connect your GitHub repository to Render
+2. Create a new Web Service
+3. Select the repository and configure:
+   - Root Directory: `/` (the repository root)
+   - Build Command: Render will use the one in render.yaml
+   - Start Command: Render will use the one in render.yaml
+4. Add environment variables as specified in render.yaml
+5. Deploy
 
 ## Features
 
@@ -85,37 +99,6 @@ pixora-ai/
 - **Video Editing**: Edit generated videos in a timeline editor
 - **User Authentication**: Sign up, sign in, and manage user profiles
 - **Credits System**: Track and manage user credits for video generation
-
-## Recent Improvements
-
-1. **UI Enhancements**:
-   - Improved scene breakdown page with collapsible scenes
-   - Enhanced video generation progress tracking
-   - Added visual indicators for scene duration
-
-2. **Backend Fixes**:
-   - Fixed storage service bucket creation issue
-   - Added error handling to user update function
-   - Improved credit display and tracking
-
-3. **Project Cleanup**:
-   - Created scripts to analyze and archive unused code
-   - Restructured backend for better maintainability
-   - Improved documentation
-
-## Development Workflow
-
-1. **Analyze Frontend Code**:
-   ```
-   node analyze_frontend.js
-   ```
-   This will identify unused components, files, and redundant code.
-
-2. **Clean Up Project**:
-   ```
-   ./cleanup_project.sh
-   ```
-   This will archive the old backend code and set up a new backend structure.
 
 ## Technologies Used
 
@@ -129,6 +112,7 @@ pixora-ai/
   - FastAPI
   - Supabase (Authentication, Database, Storage)
   - Pydantic (Data Validation)
+  - OpenAI, Fal.ai, Replicate (AI Services)
 
 ## License
 
