@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "buildCommand": "cd client && npm run build:prod",
+  "outputDirectory": "client/dist",
+  "framework": "vite",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://pixora-ai-backend.onrender.com/api/:path*" }
+  ],
+  "env": {
+    "VITE_API_URL": "https://pixora-ai-backend.onrender.com/api/v1"
+  }
+}

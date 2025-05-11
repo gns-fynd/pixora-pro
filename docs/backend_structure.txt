@@ -1,0 +1,185 @@
+backend
+├── backend/README.md
+├── backend/app
+│   ├── backend/app/__init__.py
+│   ├── backend/app/ai
+│   │   ├── backend/app/ai/README.md
+│   │   ├── backend/app/ai/__init__.py
+│   │   ├── backend/app/ai/agent
+│   │   │   ├── backend/app/ai/agent/__init__.py
+│   │   │   ├── backend/app/ai/agent/controller.py
+│   │   │   ├── backend/app/ai/agent/memory.py
+│   │   │   ├── backend/app/ai/agent/orchestrator.py
+│   │   │   ├── backend/app/ai/agent/task.py
+│   │   │   └── backend/app/ai/agent/task_manager.py
+│   │   ├── backend/app/ai/agent.py
+│   │   ├── backend/app/ai/agents
+│   │   │   ├── backend/app/ai/agents/__init__.py
+│   │   │   ├── backend/app/ai/agents/tools
+│   │   │   │   ├── backend/app/ai/agents/tools/__init__.py
+│   │   │   │   ├── backend/app/ai/agents/tools/audio_generator.py
+│   │   │   │   ├── backend/app/ai/agents/tools/character_generator.py
+│   │   │   │   ├── backend/app/ai/agents/tools/image_generator.py
+│   │   │   │   ├── backend/app/ai/agents/tools/music_generator.py
+│   │   │   │   ├── backend/app/ai/agents/tools/scene_asset_generator.py
+│   │   │   │   ├── backend/app/ai/agents/tools/scene_generator.py
+│   │   │   │   ├── backend/app/ai/agents/tools/video_composer.py
+│   │   │   │   └── backend/app/ai/agents/tools/video_generator.py
+│   │   │   ├── backend/app/ai/agents/utils
+│   │   │   │   ├── backend/app/ai/agents/utils/__init__.py
+│   │   │   │   ├── backend/app/ai/agents/utils/dependency_graph.py
+│   │   │   │   └── backend/app/ai/agents/utils/parallel.py
+│   │   │   └── backend/app/ai/agents/video_agent.py
+│   │   ├── backend/app/ai/models
+│   │   │   ├── backend/app/ai/models/__init__.py
+│   │   │   ├── backend/app/ai/models/request.py
+│   │   │   ├── backend/app/ai/models/task.py
+│   │   │   └── backend/app/ai/models/video_metadata.py
+│   │   ├── backend/app/ai/orchestrator.py
+│   │   ├── backend/app/ai/prompt_analyzer.py
+│   │   ├── backend/app/ai/sdk
+│   │   │   ├── backend/app/ai/sdk/README.md
+│   │   │   ├── backend/app/ai/sdk/__init__.py
+│   │   │   ├── backend/app/ai/sdk/agent.py
+│   │   │   └── backend/app/ai/sdk/context.py
+│   │   ├── backend/app/ai/tasks
+│   │   │   ├── backend/app/ai/tasks/__init__.py
+│   │   │   ├── backend/app/ai/tasks/enhanced_task_manager.py
+│   │   │   └── backend/app/ai/tasks/task_manager.py
+│   │   ├── backend/app/ai/tools
+│   │   │   ├── backend/app/ai/tools/__init__.py
+│   │   │   ├── backend/app/ai/tools/audio_tools.py
+│   │   │   ├── backend/app/ai/tools/base.py
+│   │   │   ├── backend/app/ai/tools/image_tools.py
+│   │   │   ├── backend/app/ai/tools/script_tools.py
+│   │   │   ├── backend/app/ai/tools/utility_tools.py
+│   │   │   └── backend/app/ai/tools/video_tools.py
+│   │   ├── backend/app/ai/utils
+│   │   │   ├── backend/app/ai/utils/__init__.py
+│   │   │   ├── backend/app/ai/utils/duration
+│   │   │   │   ├── backend/app/ai/utils/duration/README.md
+│   │   │   │   ├── backend/app/ai/utils/duration/__init__.py
+│   │   │   │   ├── backend/app/ai/utils/duration/audio_adjuster.py
+│   │   │   │   ├── backend/app/ai/utils/duration/common.py
+│   │   │   │   ├── backend/app/ai/utils/duration/media_utils.py
+│   │   │   │   ├── backend/app/ai/utils/duration/scene_manager.py
+│   │   │   │   └── backend/app/ai/utils/duration/video_adjuster.py
+│   │   │   ├── backend/app/ai/utils/duration_adjuster.py
+│   │   │   ├── backend/app/ai/utils/hierarchical_storage_adapter.py
+│   │   │   ├── backend/app/ai/utils/json_utils.py
+│   │   │   ├── backend/app/ai/utils/model_converters.py
+│   │   │   └── backend/app/ai/utils/storage_adapter.py
+│   │   ├── backend/app/ai/video_generator.py
+│   │   └── backend/app/ai/websocket_manager.py
+│   ├── backend/app/auth
+│   │   ├── backend/app/auth/__init__.py
+│   │   ├── backend/app/auth/jwt.py
+│   │   └── backend/app/auth/supabase.py
+│   ├── backend/app/core
+│   │   ├── backend/app/core/__init__.py
+│   │   └── backend/app/core/config.py
+│   ├── backend/app/main.py
+│   ├── backend/app/models
+│   ├── backend/app/routers
+│   │   ├── backend/app/routers/__init__.py
+│   │   ├── backend/app/routers/admin.py
+│   │   ├── backend/app/routers/agent_chat.py
+│   │   ├── backend/app/routers/ai_chat.py
+│   │   ├── backend/app/routers/ai_generation.py
+│   │   ├── backend/app/routers/auth.py
+│   │   ├── backend/app/routers/generation.py
+│   │   ├── backend/app/routers/scenes.py
+│   │   ├── backend/app/routers/tasks.py
+│   │   ├── backend/app/routers/users.py
+│   │   ├── backend/app/routers/videos.py
+│   │   ├── backend/app/routers/voice_samples.py
+│   │   └── backend/app/routers/websocket_router.py
+│   ├── backend/app/schemas
+│   │   ├── backend/app/schemas/__init__.py
+│   │   ├── backend/app/schemas/ai_generation.py
+│   │   ├── backend/app/schemas/generation.py
+│   │   ├── backend/app/schemas/scene_image.py
+│   │   ├── backend/app/schemas/user.py
+│   │   └── backend/app/schemas/voice_sample.py
+│   ├── backend/app/services
+│   │   ├── backend/app/services/__init__.py
+│   │   ├── backend/app/services/credit_service.py
+│   │   ├── backend/app/services/credits.py
+│   │   ├── backend/app/services/dependencies.py
+│   │   ├── backend/app/services/fal_ai
+│   │   │   ├── backend/app/services/fal_ai/__init__.py
+│   │   │   ├── backend/app/services/fal_ai/base.py
+│   │   │   ├── backend/app/services/fal_ai/image_to_video.py
+│   │   │   ├── backend/app/services/fal_ai/text_to_image.py
+│   │   │   ├── backend/app/services/fal_ai/text_to_music.py
+│   │   │   └── backend/app/services/fal_ai/text_to_speech.py
+│   │   ├── backend/app/services/openai
+│   │   │   ├── backend/app/services/openai/__init__.py
+│   │   │   ├── backend/app/services/openai/image_generation.py
+│   │   │   └── backend/app/services/openai/service.py
+│   │   ├── backend/app/services/redis_client.py
+│   │   ├── backend/app/services/replicate
+│   │   │   ├── backend/app/services/replicate/__init__.py
+│   │   │   ├── backend/app/services/replicate/base.py
+│   │   │   ├── backend/app/services/replicate/music_generation.py
+│   │   │   └── backend/app/services/replicate/tts.py
+│   │   ├── backend/app/services/storage
+│   │   │   ├── backend/app/services/storage/README.md
+│   │   │   ├── backend/app/services/storage/__init__.py
+│   │   │   ├── backend/app/services/storage/base.py
+│   │   │   ├── backend/app/services/storage/manager.py
+│   │   │   └── backend/app/services/storage/supabase.py
+│   │   ├── backend/app/services/supabase.py
+│   │   └── backend/app/services/voice_sample.py
+│   ├── backend/app/tasks
+│   └── backend/app/utils
+│       ├── backend/app/utils/logging_config.py
+│       └── backend/app/utils/logging_utils.py
+├── backend/backend_structure.txt
+├── backend/db
+│   ├── backend/db/apply_fix.sh
+│   └── backend/db/schema.sql
+├── backend/docs
+│   ├── backend/docs/ARCHITECTURE.md
+│   ├── backend/docs/CODING_STANDARDS.md
+│   ├── backend/docs/DEVELOPER_GUIDE.md
+│   ├── backend/docs/agent-guide.md
+│   ├── backend/docs/api-reference.md
+│   ├── backend/docs/architecture-diagram.txt
+│   ├── backend/docs/fal.ai-docs.md
+│   ├── backend/docs/loader.html
+│   ├── backend/docs/pixora.md
+│   ├── backend/docs/sso-troubleshooting.md
+│   └── backend/docs/websocket_architecture.md
+├── backend/logs
+│   ├── backend/logs/character_profiles
+│   │   ├── backend/logs/character_profiles/character_Historian_20250506_203820.json
+│   │   ├── backend/logs/character_profiles/character_Historical_Narrator_20250506_203418.json
+│   │   ├── backend/logs/character_profiles/character_Indian_Merchant_20250506_234952.json
+│   │   ├── backend/logs/character_profiles/character_Indian_Merchant_20250506_235248.json
+│   │   ├── backend/logs/character_profiles/character_Indian_Merchant_20250506_235259.json
+│   │   ├── backend/logs/character_profiles/character_Narrator_20250506_203422.json
+│   │   ├── backend/logs/character_profiles/character_Terrorism_Analyst_20250506_203444.json
+│   │   ├── backend/logs/character_profiles/character_Tio_Manuel_20250506_234953.json
+│   │   ├── backend/logs/character_profiles/character_Vasco_da_Gama_20250506_234925.json
+│   │   ├── backend/logs/character_profiles/character_Vasco_da_Gama_20250506_234929.json
+│   │   ├── backend/logs/character_profiles/character_Vasco_da_Gama_20250506_235224.json
+│   │   ├── backend/logs/character_profiles/character_Vasco_da_Gama_20250506_235225.json
+│   │   ├── backend/logs/character_profiles/character_Young_Activist_20250506_203843.json
+│   │   └── backend/logs/character_profiles/character_Young_Soldier_20250506_203452.json
+│   ├── backend/logs/pixora_20250506.log
+│   ├── backend/logs/pixora_error_20250506.log
+│   └── backend/logs/scene_breakdowns
+│       ├── backend/logs/scene_breakdowns/scene_breakdown_Create_a_video_in_th_20250506_234859.json
+│       ├── backend/logs/scene_breakdowns/scene_breakdown_Create_a_video_in_th_20250506_234902.json
+│       ├── backend/logs/scene_breakdowns/scene_breakdown_Create_a_video_in_th_20250506_235200.json
+│       ├── backend/logs/scene_breakdowns/scene_breakdown_Create_a_video_on_th_20250506_203354.json
+│       ├── backend/logs/scene_breakdowns/scene_breakdown_Create_a_video_on_th_20250506_203355.json
+│       └── backend/logs/scene_breakdowns/scene_breakdown_Create_a_video_on_th_20250506_203752.json
+├── backend/output.mp3
+├── backend/requirements.txt
+├── backend/run.py
+├── backend/run_server.py
+└── backend/test_websocket.py
+
+30 directories, 153 files

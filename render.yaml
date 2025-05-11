@@ -1,0 +1,41 @@
+services:
+  # Backend API service
+  - type: web
+    name: pixora-ai-backend
+    env: python
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: cd backend && python run.py
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 10000
+      - key: RELOAD
+        value: False
+      - key: API_V1_STR
+        value: /api/v1
+      - key: PROJECT_NAME
+        value: Pixora AI
+      - key: STORAGE_TYPE
+        value: local
+      - key: STORAGE_VIDEOS_BUCKET
+        value: videos
+      - key: STORAGE_IMAGES_BUCKET
+        value: images
+      - key: STORAGE_AUDIO_BUCKET
+        value: audio
+      # Secrets that should be set in the Render dashboard
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: FAL_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: REPLICATE_API_TOKEN
+        sync: false

@@ -1,0 +1,499 @@
+"""
+AI agent orchestrator for video generation.
+
+This module provides the main agent orchestrator for the Pixora AI platform,
+integrating the new video agent implementation.
+"""
+import logging
+import json
+import asyncio
+from typing import Dict, Any, Optional, List, Callable, Union, TypeVar
+import os
+import uuid
+from datetime import datetime
+
+from fastapi import Depends, HTTPException, status
+
+from app.core.config import Settings, get_settings
+from app.services.credits import CreditService
+from app.services.redis_client import RedisClient
+from app.ai.models.task import Task, TaskStatus, TaskStage, ProgressCallback
+from app.ai.models.request import VideoRequest, TaskResponse, TaskStatus as TaskStatusModel
+from app.ai.models.video_metadata import VideoMetadata
+from app.ai.tasks.task_manager import TaskManager
+from app.ai.agents.video_agent import VideoAgent, process_video_request, get_video_agent
+from app.services.openai import OpenAIService
+from app.services.fal_ai import FalAiService
+from app.services.replicate import ReplicateService
+from app.ai.utils.storage_adapter import StorageAdapter
+from app.ai.utils.model_converters import unified_request_to_video_request, video_result_to_unified_response
+
+# Set up logging
+logger = logging.getLogger(__name__)
+
+
+class VideoOrchestrator:
+    """
+    AI agent orchestrator for video generation.
+    """
+
+    def __init__(
+        self,
+        credit_service: CreditService = Depends(),
+        redis_client: RedisClient = Depends(),
+        settings: Settings = Depends(get_settings),
+        openai_service: OpenAIService = Depends(),
+        fal_ai_service: FalAiService = Depends(),
+        replicate_service: ReplicateService = Depends(),
+        storage_service: StorageAdapter = Depends(),
+    ):
+        """
+        Initialize the video orchestrator.
+
+        Args:
+            credit_service: The credit service
+            redis_client: The Redis client for task progress tracking
+            task_manager: Optional task manager (creates a new one if None)
+            video_agent: Optional video agent (creates a new one if None)
+            settings: Application settings
+        """
+        self.credit_service = credit_service
+        self.redis_client = redis_client
+        self.settings = settings
+        
+        # Initialize task manager and services
+        self._task_manager = TaskManager(redis_client=redis_client)
+        self._openai_service = openai_service
+        self._fal_ai_service = fal_ai_service
+        self._replicate_service = replicate_service
+        self._storage_service = storage_service
+
+        # Progress tracking
+        self.progress = {}
+
+    async def create_video(
+        self,
+        request: VideoRequest,
+        user_id: str,
+    ) -> TaskResponse:
+        """
+        Create a video from a request.
+
+        Args:
+            request: The video request
+            user_id: The user ID
+
+        Returns:
+            Task response with task ID and status
+        """
+        try:
+            # Create a task
+            task = self._task_manager.create_task(
+                prompt=request.prompt,
+                duration=request.duration,
+                style=request.style.value if hasattr(request.style, 'value') else request.style,
+                user_id=user_id,
+            )
+            
+            # Add voice sample URL to metadata if provided
+            if request.voice_sample_url:
+                task.metadata["voice_sample_url"] = request.voice_sample_url
+            
+            # Create a wrapper function that includes the services
+            async def process_with_services(task, progress_callback):
+                return await process_video_request(
+                    task,
+                    progress_callback,
+                    openai_service=self._openai_service,
+                    fal_ai_service=self._fal_ai_service,
+                    replicate_service=self._replicate_service,
+                    storage_service=self._storage_service,
+                )
+            
+            # Start the task with the wrapper function
+            await self._task_manager.start_task(
+                task_id=task.id,
+                process_func=process_with_services,
+                timeout_seconds=3600  # 1 hour timeout
+            )
+            
+            # Return the task response
+            return TaskResponse(
+                task_id=task.id,
+                status=task.status.value if hasattr(task.status, 'value') else str(task.status)
+            )
+            
+        except Exception as e:
+            logger.error(f"Error creating video: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Video creation failed: {str(e)}"
+            )
+
+    async def get_task_status(self, task_id: str, user_id: str) -> TaskStatusModel:
+        """
+        Get the status of a task.
+
+        Args:
+            task_id: The task ID
+            user_id: The user ID
+
+        Returns:
+            Task status
+        """
+        try:
+            # Get the task
+            task = self._task_manager.get_task(task_id)
+            if not task:
+                # Try to get from Redis
+                task = await self._task_manager.get_task_from_redis(task_id)
+                
+            if not task:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Task {task_id} not found"
+                )
+            
+            # Check if the task belongs to the user
+            if task.user_id and task.user_id != user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have permission to view this task"
+                )
+            
+            # Get the progress from Redis
+            progress_info = await self.redis_client.get_json(f"task:{task_id}:progress") or {}
+            
+            # Get the result if available
+            result = None
+            if task.status == TaskStatus.COMPLETED:
+                result = {
+                    "video_url": task.video_url,
+                    "scenes": task.scenes,
+                    "assets": task.assets
+                }
+            elif task.status == TaskStatus.FAILED:
+                result = {
+                    "error": task.error
+                }
+            
+            # Parse the updated_at timestamp
+            updated_at = datetime.fromtimestamp(task.updated_at)
+            
+            # Return the task status
+            return TaskStatusModel(
+                task_id=task.id,
+                status=task.status.value if hasattr(task.status, 'value') else str(task.status),
+                progress=task.progress,
+                video_url=task.video_url,
+                error=task.error,
+                stage=task.stage.value if hasattr(task.stage, 'value') else str(task.stage),
+                updated_at=updated_at,
+                result=result
+            )
+            
+        except HTTPException:
+            # Re-raise HTTP exceptions
+            raise
+        except Exception as e:
+            logger.error(f"Error getting task status: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error getting task status: {str(e)}"
+            )
+
+    async def cancel_task(self, task_id: str, user_id: str) -> bool:
+        """
+        Cancel a task.
+
+        Args:
+            task_id: The task ID
+            user_id: The user ID
+
+        Returns:
+            True if the task was cancelled, False otherwise
+        """
+        try:
+            # Get the task
+            task = self._task_manager.get_task(task_id)
+            if not task:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Task {task_id} not found"
+                )
+            
+            # Check if the task belongs to the user
+            if task.user_id and task.user_id != user_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You don't have permission to cancel this task"
+                )
+            
+            # Cancel the task
+            cancelled = await self._task_manager.cancel_task(task_id)
+            
+            return cancelled
+            
+        except HTTPException:
+            # Re-raise HTTP exceptions
+            raise
+        except Exception as e:
+            logger.error(f"Error cancelling task: {str(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Error cancelling task: {str(e)}"
+            )
+
+    async def process_unified_request(
+        self,
+        request: Dict[str, Any],
+        task_id: str,
+        user_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Process a unified generation request for video.
+
+        Args:
+            request: The unified request
+            task_id: The task ID
+            user_id: The user ID
+
+        Returns:
+            The result
+        """
+        try:
+            # Get the intent from the client_context if available
+            intent = "generate_video"  # Default intent
+            if "client_context" in request and "operation" in request["client_context"]:
+                operation = request["client_context"]["operation"]
+                # Map operations to intents
+                operation_to_intent = {
+                    "generate_script": "generate_script",
+                    "generate_scene_breakdown": "generate_scene_breakdown",
+                    "generate_video": "generate_video",
+                    "regenerate_scene": "edit_scene",
+                    "edit_scene": "edit_scene",
+                    "edit_video": "edit_video"
+                }
+                if operation in operation_to_intent:
+                    intent = operation_to_intent[operation]
+            
+            # Convert the unified request to a video request
+            video_request = unified_request_to_video_request(request)
+            
+            # Create a task
+            task = self._task_manager.create_task(
+                prompt=video_request["prompt"],
+                duration=video_request["duration"],
+                style=video_request["style"],
+                user_id=user_id,
+            )
+            
+            # Add voice sample URL to metadata if provided
+            if video_request.get("voice_sample_url"):
+                task.metadata["voice_sample_url"] = video_request["voice_sample_url"]
+            
+            # Add character consistency to metadata if provided
+            if "character_consistency" in video_request:
+                task.metadata["character_consistency"] = video_request["character_consistency"]
+            
+            # Add reference files to metadata if provided
+            if video_request.get("reference_files"):
+                task.metadata["reference_files"] = video_request["reference_files"]
+            
+            # Define a progress callback that updates Redis
+            async def progress_callback(progress: int, message: Optional[str] = None):
+                try:
+                    # Update the progress in Redis
+                    await self.redis_client.set_json(
+                        f"task:{task_id}:progress",
+                        {
+                            "progress": progress,
+                            "message": message or f"Processing: {progress}%",
+                            "status": "processing" if progress < 100 else "completed",
+                            "updated_at": datetime.now().isoformat()
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"Error updating progress in Redis: {e}")
+            
+            # Process based on intent
+            if intent == "generate_script":
+                # For script generation, we'll just create a simple script
+                # In a real implementation, this would use a dedicated script generator
+                logger.info(f"Generating script for prompt: {video_request['prompt']}")
+                
+                # Update progress
+                await progress_callback(50, "Generating script...")
+                
+                # Create a simple script with title and description
+                script = {
+                    "title": f"Script for: {video_request['prompt'][:30]}...",
+                    "description": f"A script based on the prompt: {video_request['prompt']}",
+                    "style": video_request["style"],
+                    "narration": f"This video will showcase {video_request['prompt']}",
+                    "tone": "informative",
+                    "target_audience": "general",
+                    "key_points": ["Introduction", "Main content", "Conclusion"]
+                }
+                
+                # Store the script in the task
+                task.script = script
+                
+                # Update progress
+                await progress_callback(100, "Script generation complete")
+                
+                # Return the script
+                return {
+                    "message": "Script generation complete",
+                    "data": script
+                }
+                
+            elif intent == "generate_scene_breakdown":
+                # For scene breakdown, we'll create a simple scene breakdown
+                # In a real implementation, this would use a dedicated scene breakdown generator
+                logger.info(f"Generating scene breakdown for prompt: {video_request['prompt']}")
+                
+                # Log the input parameters for debugging
+                try:
+                    logger.debug(f"Scene breakdown input parameters: {json.dumps(video_request, default=str)}")
+                except Exception as e:
+                    logger.debug(f"Could not serialize video_request: {str(e)}")
+                
+                # Update progress
+                await progress_callback(50, "Breaking down script into scenes...")
+                
+                # Create a simple scene breakdown
+                scenes = []
+                total_duration = video_request["duration"]
+                scene_count = min(5, max(3, total_duration // 10))  # 3-5 scenes based on duration
+                scene_duration = total_duration / scene_count
+                
+                # In a real implementation, this would call an LLM to generate the scene breakdown
+                # For now, we'll create a more detailed mock implementation for debugging
+                
+                # Create a prompt for the scene breakdown
+                prompt_text = f"""
+                Create a detailed scene breakdown for a {total_duration} second video about:
+                {video_request['prompt']}
+                
+                Break it down into {int(scene_count)} scenes, each approximately {scene_duration} seconds long.
+                For each scene, provide:
+                1. A descriptive title
+                2. A detailed visual description
+                3. Narration text
+                """
+                
+                logger.debug(f"Would send this prompt to LLM: {prompt_text}")
+                
+                # Mock LLM response for debugging
+                for i in range(int(scene_count)):
+                    scene_id = f"scene_{i+1}_{task_id[-8:]}"
+                    scene = {
+                        "id": scene_id,
+                        "title": f"Scene {i+1}: {video_request['prompt'][:20]}...",
+                        "description": f"Visual description for scene {i+1} showing {video_request['prompt'][:30]}...",
+                        "narration": f"Narration for scene {i+1} about {video_request['prompt'][:30]}...",
+                        "duration": scene_duration
+                    }
+                    scenes.append(scene)
+                
+                # Store the scenes in the task
+                task.scenes = scenes
+                
+                # Log the generated scenes for debugging
+                logger.debug(f"Generated {len(scenes)} scenes for scene breakdown")
+                try:
+                    logger.debug(f"First scene: {json.dumps(scenes[0], default=str)}")
+                    logger.debug(f"All scenes: {json.dumps(scenes, default=str)}")
+                except Exception as e:
+                    logger.debug(f"Could not serialize scenes: {str(e)}")
+                
+                # Update progress
+                await progress_callback(100, "Scene breakdown complete")
+                
+                # Create the response in the format expected by the frontend
+                # Important: The scenes must be at the top level of the result for the frontend to find them
+                response = {
+                    "response_type": "clips",
+                    "message": "Scene breakdown complete",
+                    "data": {
+                        "scenes": scenes,
+                        "total_duration": total_duration
+                    },
+                    "scenes": scenes,  # Add scenes at the top level as well
+                    "total_duration": total_duration,  # Add total_duration at the top level as well
+                    "task_id": task_id
+                }
+                
+                # Log the response for debugging
+                try:
+                    logger.debug(f"Scene breakdown response: {json.dumps(response, default=str)}")
+                except Exception as e:
+                    logger.debug(f"Could not serialize response: {str(e)}")
+                
+                # Store the result in Redis directly to ensure it's available for polling
+                try:
+                    await self.redis_client.set_json(
+                        f"task:{task_id}:result",
+                        {
+                            "scenes": scenes,
+                            "total_duration": total_duration
+                        }
+                    )
+                    logger.debug(f"Stored scene breakdown result in Redis for task {task_id}")
+                except Exception as e:
+                    logger.error(f"Error storing scene breakdown result in Redis: {str(e)}")
+                
+                return response
+                
+            else:  # Default: generate_video
+                # Process the video request with properly initialized services
+                video_url = await process_video_request(
+                    task, 
+                    progress_callback,
+                    openai_service=self._openai_service,
+                    fal_ai_service=self._fal_ai_service,
+                    replicate_service=self._replicate_service,
+                    storage_service=self._storage_service,
+                )
+                
+                # Convert the result to a unified response
+                result = video_result_to_unified_response(
+                    result={
+                        "video_url": video_url,
+                        "scenes": task.scenes,
+                        "duration": task.duration,
+                        "style": task.style
+                    },
+                    task_id=task_id,
+                    message="Video generation complete"
+                )
+                
+                return result.dict()
+            
+        except Exception as e:
+            logger.error(f"Error processing unified request: {str(e)}")
+            # Update the task status in Redis
+            try:
+                await self.redis_client.set_json(
+                    f"task:{task_id}:progress",
+                    {
+                        "progress": 100,
+                        "message": f"Error: {str(e)}",
+                        "status": "error",
+                        "updated_at": datetime.now().isoformat()
+                    }
+                )
+            except Exception as redis_error:
+                logger.error(f"Error updating progress in Redis: {redis_error}")
+            
+            # Return an error response
+            return {
+                "response_type": "error",
+                "message": f"Error processing request: {str(e)}",
+                "data": {
+                    "error": str(e)
+                },
+                "task_id": task_id
+            }

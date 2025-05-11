@@ -1,0 +1,3 @@
+"""
+Pixora AI Backend API
+"""

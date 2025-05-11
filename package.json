@@ -1,0 +1,20 @@
+{
+  "name": "pixora-ai",
+  "version": "1.0.0",
+  "description": "Pixora AI - Video generation platform",
+  "private": true,
+  "scripts": {
+    "dev:client": "cd client && npm run dev",
+    "dev:server": "cd backend && python run.py",
+    "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
+    "build:client": "cd client && npm run build",
+    "build:prod": "cd client && npm run build:prod",
+    "lint": "cd client && npm run lint",
+    "start:client": "cd client && npm run start",
+    "start:server": "cd backend && python run.py",
+    "start": "concurrently \"npm run start:client\" \"npm run start:server\""
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

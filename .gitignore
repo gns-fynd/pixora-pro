@@ -1,0 +1,64 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Client dependencies and build artifacts
+client/node_modules
+client/dist
+client/dist-ssr
+client/*.local
+
+# Server dependencies and artifacts
+server/__pycache__/
+server/**/__pycache__/
+backend/__pycache__/
+backend/**/__pycache__/
+server/venv/
+server/.venv/
+server/env/
+backend/venv/
+backend/.venv/
+backend/env/
+server/.env
+backend/.env
+server/storage/*
+!server/storage/.gitkeep
+backend/storage/*
+!backend/storage/.gitkeep
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+client/.env
+client/.env.local
+client/.env.development.local
+client/.env.test.local
+client/.env.production.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Deployment
+.vercel
+.render
+
+# Misc
+archive
+video-agent
+dist
