@@ -81,10 +81,17 @@ const WebSocketChat: React.FC<WebSocketChatProps> = ({
     if (!token || !isAuthenticated) return;
 
     const connectWebSocket = () => {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${protocol}//${window.location.host}/api/v1/ws/${taskId}`;
+      // Get WebSocket URL from environment variables or construct it
+      const wsUrl = import.meta.env.VITE_WEBSOCKET_URL || 
+        `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/chat/ws`;
       
-      const ws = new WebSocket(wsUrl);
+      // Append token and task ID as query parameters
+      // Make sure to encode the token to avoid URL parsing issues
+      const wsUrlWithParams = `${wsUrl}?token=${encodeURIComponent(token)}${taskId ? `&task_id=${encodeURIComponent(taskId)}` : ''}`;
+      
+      console.log('Connecting to WebSocket with URL:', wsUrlWithParams.split('?')[0]);
+      
+      const ws = new WebSocket(wsUrlWithParams);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -195,10 +202,10 @@ const WebSocketChat: React.FC<WebSocketChatProps> = ({
       timestamp: Date.now()
     }]);
 
-    // Send message to WebSocket
+    // Send message to WebSocket using the new format
     wsRef.current.send(JSON.stringify({
-      type: 'chat_message',
-      message: input
+      message: input,
+      task_id: taskId
     }));
 
     // Clear input and set loading
@@ -207,15 +214,15 @@ const WebSocketChat: React.FC<WebSocketChatProps> = ({
     setError(null);
   };
 
-  // Send a command
+  // Send a command as a message with context
   const sendCommand = (command: string, params: Record<string, unknown> = {}) => {
     if (!connected || !wsRef.current) return;
 
-    // Send command to WebSocket
+    // Send command as a message with context
     wsRef.current.send(JSON.stringify({
-      type: 'command',
-      command,
-      params
+      message: command,
+      task_id: taskId,
+      context: params
     }));
 
     // Set loading

@@ -182,7 +182,8 @@ class AuthClient {
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${data.session.access_token}`
-            }
+            },
+            body: JSON.stringify({ token: data.session.access_token })
           });
           
           if (!response.ok) {
@@ -305,7 +306,7 @@ class AuthClient {
       }
       
       // Fetch credits from the backend API
-      const response = await fetch(`${API_BASE_URL}/users/me/credits`, {
+      const response = await fetch(`${API_BASE_URL}/api/users/me/credits`, {
         headers: {
           'Authorization': `Bearer ${token || ''}`
         }

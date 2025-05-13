@@ -46,17 +46,15 @@ export class AgentService {
   private messageHandlers: Map<string, (data: AgentMessageData) => void> = new Map();
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
-  private userId: string;
-  private token: string;
+  private authToken: string;
   
   /**
    * Create a new agent service
-   * @param userId User ID
+   * @param _userId User ID (not used but kept for backward compatibility)
    * @param token Authentication token
    */
-  constructor(userId: string, token: string) {
-    this.userId = userId;
-    this.token = token;
+  constructor(_userId: string, token: string) {
+    this.authToken = token;
   }
   
   /**
@@ -66,14 +64,17 @@ export class AgentService {
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
-        // Determine WebSocket URL for the new unified agent endpoint
-        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/agent/ws/${this.userId}`;
+        // Get WebSocket URL from environment variables or construct it
+        const wsUrl = import.meta.env.VITE_WEBSOCKET_URL || 
+          `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/api/chat/ws`;
+        
+        // Append token as query parameter
+        const wsUrlWithToken = `${wsUrl}?token=${this.authToken}`;
         
         console.log(`Connecting to WebSocket at ${wsUrl}`);
         
-        // Create WebSocket connection
-        this.socket = new WebSocket(wsUrl);
+        // Create WebSocket connection with token
+        this.socket = new WebSocket(wsUrlWithToken);
         
         // Set up event handlers
         this.socket.onopen = async () => {
@@ -161,18 +162,30 @@ export class AgentService {
   /**
    * Send a message to the agent via WebSocket
    * @param message Message to send
+   * @param task_id Optional task ID or context for continuing a conversation
    * @param context Optional context information
    */
-  sendMessageWs(message: string, context?: Record<string, unknown>): void {
+  sendMessageWs(message: string, task_id?: string | Record<string, unknown>, context?: Record<string, unknown>): void {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       throw new Error('WebSocket not connected');
     }
     
     // Format the message according to the backend's expected format
-    const messageData = {
-      message: message,
-      context: context || {}
-    };
+    let messageData;
+    
+    // Handle the case where task_id is actually a context object
+    if (typeof task_id === 'object') {
+      messageData = {
+        message: message,
+        context: task_id || {}
+      };
+    } else {
+      messageData = {
+        message: message,
+        task_id: task_id,
+        context: context || {}
+      };
+    }
     
     console.log('Sending WebSocket message:', messageData);
     
@@ -183,39 +196,70 @@ export class AgentService {
   /**
    * Send a message to the agent via REST API
    * @param message Message to send
+   * @param task_id Optional task ID or context for continuing a conversation
    * @param context Optional context information
    * @returns Promise that resolves with the response
    */
-  async sendMessage(message: string, context?: Record<string, unknown>): Promise<{
+  async sendMessage(message: string, task_id?: string | Record<string, unknown>, context?: Record<string, unknown>): Promise<{
+    type: string;
+    content: string;
     message: string;
     task_id?: string;
-    video_url?: string;
     actions?: ChatAction[];
+    function_call?: Record<string, unknown>;
+    function_response?: Record<string, unknown>;
   }> {
-    const response = await apiClient.post<{
-      message: string;
-      task_id?: string;
-      video_url?: string;
-      actions?: ChatAction[];
-    }>('/api/v1/agent', {
-      message,
-      context: context || {}
-    });
+    let requestData;
     
-    return response;
+    // Handle the case where task_id is actually a context object
+    if (typeof task_id === 'object') {
+      requestData = {
+        message,
+        context: task_id || {}
+      };
+    } else {
+      requestData = {
+        message,
+        task_id,
+        context: context || {}
+      };
+    }
+    
+    const response = await apiClient.post<{
+      type: string;
+      content: string;
+      task_id?: string;
+      function_call?: Record<string, unknown>;
+      function_response?: Record<string, unknown>;
+    }>('/api/chat', requestData);
+    
+    // Add message and actions properties for compatibility with ChatContext
+    return {
+      ...response,
+      message: response.content,
+      actions: []
+    };
   }
   
   /**
    * Execute an action
    * @param action Action to execute
+   * @param task_id Optional task ID or context for continuing a conversation
    * @param context Optional context information
    * @returns Promise that resolves with the response
    */
-  async executeAction(action: ChatAction, context?: Record<string, unknown>): Promise<{
+  async executeAction(
+    action: ChatAction, 
+    task_id?: string | Record<string, unknown>,
+    context?: Record<string, unknown>
+  ): Promise<{
+    type: string;
+    content: string;
     message: string;
     task_id?: string;
-    video_url?: string;
     actions?: ChatAction[];
+    function_call?: Record<string, unknown>;
+    function_response?: Record<string, unknown>;
   }> {
     // Construct a message based on the action type
     let message = '';
@@ -237,11 +281,29 @@ export class AgentService {
         message = `Execute action: ${action.type}`;
     }
     
+    // Create context with action
+    let finalContext;
+    let finalTaskId;
+    
+    // Handle the case where task_id is actually a context object
+    if (typeof task_id === 'object') {
+      finalContext = {
+        ...task_id,
+        action: action
+      };
+      finalTaskId = undefined;
+    } else {
+      finalContext = {
+        ...(context || {}),
+        action: action
+      };
+      finalTaskId = task_id;
+    }
+    
     // Send the message
-    return await this.sendMessage(message, {
-      ...context,
-      action: action
-    });
+    const response = await this.sendMessage(message, finalTaskId, finalContext);
+    
+    return response;
   }
   
   /**
@@ -295,7 +357,7 @@ export class AgentService {
       progress: number;
       message?: string;
       video_url?: string;
-    }>(`/api/v1/ai/generate/status/${taskId}`);
+    }>(`/api/chat/tasks/${taskId}/status`);
   }
 }
 

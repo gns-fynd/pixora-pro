@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, useContext, useRef } from 'react';
+import { createContext, useState, useEffect, useContext, useRef } from 'react';
 import { AgentService, createAgentService, ChatAction, AgentMessageData } from '@/services/agent-service';
 import useAuthStore from '@/store/use-auth-store';
 
@@ -255,8 +255,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         // Add assistant response to chat
         addMessage({
           role: 'assistant',
-          content: response.message,
-          actions: response.actions,
+          content: response.content,
+          actions: response.actions || [],
           timestamp: new Date()
         });
         
@@ -335,8 +335,8 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Add assistant response to chat
       addMessage({
         role: 'assistant',
-        content: response.message,
-        actions: response.actions,
+        content: response.content,
+        actions: response.actions || [],
         timestamp: new Date()
       });
       

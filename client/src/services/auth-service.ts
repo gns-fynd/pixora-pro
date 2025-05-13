@@ -252,22 +252,22 @@ export const authService = {
       try {
         console.log('Performing session check');
         
-        // First try to get the user profile directly from the backend
-        // This will work if we've already exchanged the token
-        try {
-          const backendUser = await apiClient.get<User>('/users/me');
-          console.log('Successfully got user profile from backend');
-          
-          // If we got the user, we have a valid session
-          return {
-            user: backendUser,
-            session: null, // We don't need the session details
-            error: null,
-          };
-        } catch (error) {
-          console.log('Could not get user profile from backend, falling back to Supabase:', error);
-          // Fall back to Supabase if backend request fails
-        }
+          // First try to get the user profile directly from the backend
+          // This will work if we've already exchanged the token
+          try {
+            const backendUser = await apiClient.get<User>('/api/users/me');
+            console.log('Successfully got user profile from backend');
+            
+            // If we got the user, we have a valid session
+            return {
+              user: backendUser,
+              session: null, // We don't need the session details
+              error: null,
+            };
+          } catch (error) {
+            console.log('Could not get user profile from backend, falling back to Supabase:', error);
+            // Fall back to Supabase if backend request fails
+          }
         
         // If backend request failed, try Supabase
         const { data: sessionData, error: sessionError } = await supabase.auth.getSession();

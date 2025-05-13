@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { AgentService, AgentMessageData, AgentAction, createAgentService } from '@/services/agent-service';
+import { useState, useEffect, useRef } from 'react';
+import { AgentService, AgentMessageData, ChatAction, createAgentService } from '@/services/agent-service';
 
 interface AgentChatProps {
   initialPrompt?: string;
@@ -10,7 +10,7 @@ interface AgentChatProps {
 interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
-  actions?: AgentAction[];
+  actions?: ChatAction[];
 }
 
 export function AgentChat({ initialPrompt, onComplete, className = '' }: AgentChatProps) {
@@ -21,7 +21,6 @@ export function AgentChat({ initialPrompt, onComplete, className = '' }: AgentCh
   const [isLoading, setIsLoading] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   
   // Refs
   const agentServiceRef = useRef<AgentService | null>(null);
@@ -105,14 +104,13 @@ export function AgentChat({ initialPrompt, onComplete, className = '' }: AgentCh
     }
     
     // Handle completion
-    if (data.type === 'result' && onComplete && data.result) {
-      onComplete(data.result);
+    if (data.type === 'video_complete' && onComplete && data.video_url) {
+      onComplete({ video_url: data.video_url });
     }
     
     // Clear loading state when complete
-    if (data.type === 'result') {
+    if (data.type === 'video_complete') {
       setIsLoading(false);
-      setActiveTaskId(null);
     }
   };
   
@@ -128,11 +126,13 @@ export function AgentChat({ initialPrompt, onComplete, className = '' }: AgentCh
       setMessages(prev => [...prev, { role: 'user', content: input }]);
       
       // Send message to agent
-      const taskId = agentServiceRef.current.sendMessage(input);
-      setActiveTaskId(taskId);
+      const response = await agentServiceRef.current.sendMessage(input);
+      const taskId = response.task_id;
       
       // Register handler for this task
-      agentServiceRef.current.registerHandler(taskId, handleAgentMessage);
+      if (taskId) {
+        agentServiceRef.current.registerHandler('message', handleAgentMessage);
+      }
       
       // Clear input
       setInput('');
@@ -186,7 +186,7 @@ export function AgentChat({ initialPrompt, onComplete, className = '' }: AgentCh
                   <div>Actions:</div>
                   <ul className="list-disc pl-4">
                     {message.actions.map((action, i) => (
-                      <li key={i}>{action.action}</li>
+                      <li key={i}>{action.type}</li>
                     ))}
                   </ul>
                 </div>

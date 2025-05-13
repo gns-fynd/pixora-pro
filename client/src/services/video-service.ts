@@ -86,35 +86,35 @@ export const videoService = {
    * Create a new video
    */
   createVideo: async (videoData: VideoCreate): Promise<Video> => {
-    return apiClient.post<Video>('/videos', videoData);
+    return apiClient.post<Video>('/api/videos', videoData);
   },
 
   /**
    * Get all videos for the current user
    */
   getVideos: async (): Promise<Video[]> => {
-    return apiClient.get<Video[]>('/videos');
+    return apiClient.get<Video[]>('/api/videos');
   },
 
   /**
    * Get a specific video by ID
    */
   getVideo: async (videoId: string): Promise<Video> => {
-    return apiClient.get<Video>(`/videos/${videoId}`);
+    return apiClient.get<Video>(`/api/videos/${videoId}`);
   },
 
   /**
    * Update a video
    */
   updateVideo: async (videoId: string, videoData: VideoUpdate): Promise<Video> => {
-    return apiClient.put<Video>(`/videos/${videoId}`, videoData);
+    return apiClient.put<Video>(`/api/videos/${videoId}`, videoData);
   },
 
   /**
    * Delete a video
    */
   deleteVideo: async (videoId: string): Promise<void> => {
-    return apiClient.delete(`/videos/${videoId}`);
+    return apiClient.delete(`/api/videos/${videoId}`);
   },
 
   /**
@@ -124,7 +124,7 @@ export const videoService = {
     const formData = new FormData();
     formData.append('file', file);
 
-    return apiClient.post<Video>(`/videos/${videoId}/thumbnail`, formData, {
+    return apiClient.post<Video>(`/api/videos/${videoId}/thumbnail`, formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
       },
@@ -135,41 +135,41 @@ export const videoService = {
    * Analyze a prompt and generate scene breakdown
    */
   analyzePrompt: async (data: PromptAnalysisRequest): Promise<Scene[]> => {
-    return apiClient.post<Scene[]>('/videos/scenes/analyze', data);
+    return apiClient.post<Scene[]>('/api/videos/scenes/analyze', data);
   },
 
   /**
    * Update a scene
    */
   updateScene: async (sceneId: string, sceneData: SceneUpdate): Promise<Scene> => {
-    return apiClient.put<Scene>(`/videos/scenes/${sceneId}`, sceneData);
+    return apiClient.put<Scene>(`/api/videos/scenes/${sceneId}`, sceneData);
   },
 
   /**
    * Start video generation
    */
   startGeneration: async (data: GenerationRequest): Promise<GenerationResponse> => {
-    return apiClient.post<GenerationResponse>('/videos/generation/start', data);
+    return apiClient.post<GenerationResponse>('/api/videos/generation/start', data);
   },
 
   /**
    * Get generation status
    */
   getGenerationStatus: async (jobId: string): Promise<GenerationResponse> => {
-    return apiClient.get<GenerationResponse>(`/videos/generation/${jobId}/status`);
+    return apiClient.get<GenerationResponse>(`/api/videos/generation/${jobId}/status`);
   },
 
   /**
    * Cancel generation
    */
   cancelGeneration: async (jobId: string): Promise<GenerationResponse> => {
-    return apiClient.post<GenerationResponse>(`/videos/generation/${jobId}/cancel`);
+    return apiClient.post<GenerationResponse>(`/api/videos/generation/${jobId}/cancel`);
   },
 
   /**
    * Get all scenes for a video
    */
   getScenes: async (videoId: string): Promise<Scene[]> => {
-    return apiClient.get<Scene[]>(`/videos/scenes?video_id=${videoId}`);
+    return apiClient.get<Scene[]>(`/api/videos/scenes?video_id=${videoId}`);
   },
 };

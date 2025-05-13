@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Loader } from '@/components/ui/loader';
 import { Button } from '@/components/button';
 
