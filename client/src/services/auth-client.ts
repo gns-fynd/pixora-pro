@@ -177,7 +177,14 @@ class AuthClient {
         try {
           console.debug(`Token exchange attempt ${retryCount + 1}/${maxRetries}`);
           
-          const response = await fetch(`${API_BASE_URL}/auth/token`, {
+          // Adjust the URL path to match the backend API structure
+          const apiUrl = API_BASE_URL;
+          // Remove '/api/v1' if it's included in the URL to avoid path duplication
+          const baseUrl = apiUrl.endsWith('/api/v1') 
+            ? apiUrl.replace('/api/v1', '') 
+            : apiUrl;
+          
+          const response = await fetch(`${baseUrl}/api/auth/token`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -306,7 +313,14 @@ class AuthClient {
       }
       
       // Fetch credits from the backend API
-      const response = await fetch(`${API_BASE_URL}/api/users/me/credits`, {
+      // Adjust the URL path to match the backend API structure
+      const apiUrl = API_BASE_URL;
+      // Remove '/api/v1' if it's included in the URL to avoid path duplication
+      const baseUrl = apiUrl.endsWith('/api/v1') 
+        ? apiUrl.replace('/api/v1', '') 
+        : apiUrl;
+      
+      const response = await fetch(`${baseUrl}/api/users/me/credits`, {
         headers: {
           'Authorization': `Bearer ${token || ''}`
         }

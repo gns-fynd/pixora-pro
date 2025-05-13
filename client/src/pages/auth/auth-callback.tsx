@@ -56,7 +56,14 @@ export const AuthCallback = () => {
         
         try {
           // Exchange the Supabase token for a backend token
-          const response = await fetch(`${import.meta.env.VITE_API_URL}/auth/token`, {
+          // Adjust the URL path to match the backend API structure
+          const apiUrl = import.meta.env.VITE_API_URL;
+          // Remove '/api/v1' if it's included in the URL to avoid path duplication
+          const baseUrl = apiUrl.endsWith('/api/v1') 
+            ? apiUrl.replace('/api/v1', '') 
+            : apiUrl;
+          
+          const response = await fetch(`${baseUrl}/api/auth/token`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',

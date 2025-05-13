@@ -1,0 +1,29 @@
+# Web framework and server
+fastapi
+uvicorn
+python-dotenv
+pydantic
+httpx
+websockets
+python-multipart
+
+# Authentication
+python-jose
+
+# AI and ML services
+openai
+replicate
+fal-client
+
+# Storage and database
+supabase
+requests
+
+# Media processing
+pillow
+ffmpeg-python
+numpy
+
+# Utilities
+python-dateutil
+tenacity
