@@ -28,14 +28,14 @@ export function SplitScreenLayout({ videoId, children, onVideoUpdate }: SplitScr
     <div className="flex h-screen bg-background">
       {/* Left side - Chat Interface (1/3 width) */}
       <div 
-        ref={chatContainerRef}
-        className="w-1/3 border-r border-border/20 h-screen overflow-auto relative flex flex-col"
+        className="w-1/3 border-r border-border/20 h-screen flex flex-col"
       >
         {/* Theme toggle in top-right corner of left panel */}
         <div className="absolute top-4 right-4 z-10">
           <ThemeToggle />
         </div>
-        <div className="flex-1 overflow-hidden flex flex-col">
+        {/* Chat interface fills the column, input always visible */}
+        <div className="flex flex-col flex-1 min-h-0">
           <ChatInterface videoId={videoId} onVideoUpdate={onVideoUpdate} />
         </div>
       </div>

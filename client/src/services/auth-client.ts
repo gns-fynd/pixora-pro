@@ -1,11 +1,11 @@
 import { supabase } from './supabase';
+import { getCookie, deleteCookie } from '@/utils/cookie-utils';
 
 // API base URL - will be different in development vs production
 const API_BASE_URL = import.meta.env.VITE_API_URL;
 
 // Constants for token management
-const TOKEN_STORAGE_KEY = 'pixora_auth_token';
-const TOKEN_EXPIRY_KEY = 'pixora_auth_token_expiry';
+const TOKEN_EXPIRY_KEY = 'pixora_auth_expiry';
 const CREDITS_STORAGE_KEY = 'pixora_user_credits';
 const CREDITS_EXPIRY_KEY = 'pixora_user_credits_expiry';
 const TOKEN_REFRESH_COOLDOWN_MS = 10000; // 10 seconds cooldown between token refreshes
@@ -25,63 +25,63 @@ class AuthClient {
   private authFailureCount: number = 0;
   private circuitBreakerTripped: boolean = false;
   private circuitBreakerResetTimeout: NodeJS.Timeout | null = null;
+  private refreshTimer: NodeJS.Timeout | null = null;
   
   constructor() {
-    // Try to load token from localStorage on initialization
-    this.loadTokenFromStorage();
+    // Try to load token expiry from cookie on initialization
+    this.loadTokenExpiryFromCookie();
+    
+    // Set up token refresh timer
+    this.setupTokenRefreshTimer();
   }
   
   /**
-   * Load token from localStorage
+   * Load token expiry from cookie
    */
-  private loadTokenFromStorage(): void {
+  private loadTokenExpiryFromCookie(): void {
     try {
-      const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
-      const storedExpiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
+      const storedExpiry = getCookie(TOKEN_EXPIRY_KEY);
       
-      if (storedToken && storedExpiry) {
+      if (storedExpiry) {
         const expiryTime = parseInt(storedExpiry, 10);
         
-        // Only use the stored token if it's not expired
+        // Only use the stored expiry if it's not expired
         if (expiryTime > Date.now()) {
-          console.debug('Using stored auth token from localStorage');
-          this.authToken = storedToken;
+          console.debug('Using stored auth token expiry from cookie');
           this.tokenExpiryTime = expiryTime;
         } else {
           console.debug('Stored auth token is expired, will refresh');
-          // Clear expired token
-          this.clearTokenStorage();
         }
       }
     } catch (error) {
-      console.error('Error loading token from localStorage:', error);
-      this.clearTokenStorage();
+      console.error('Error loading token expiry from cookie:', error);
     }
   }
   
   /**
-   * Save token to localStorage with expiry
+   * Set up token refresh timer
    */
-  private saveTokenToStorage(token: string, expiryTime: number): void {
-    try {
-      localStorage.setItem(TOKEN_STORAGE_KEY, token);
-      localStorage.setItem(TOKEN_EXPIRY_KEY, expiryTime.toString());
-    } catch (error) {
-      console.error('Error saving token to localStorage:', error);
+  private setupTokenRefreshTimer(): void {
+    // Clear any existing timer
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
     }
-  }
-  
-  /**
-   * Clear token from localStorage
-   */
-  private clearTokenStorage(): void {
-    try {
-      localStorage.removeItem(TOKEN_STORAGE_KEY);
-      localStorage.removeItem(TOKEN_EXPIRY_KEY);
-      this.authToken = null;
-      this.tokenExpiryTime = 0;
-    } catch (error) {
-      console.error('Error clearing token from localStorage:', error);
+    
+    // If we have a valid expiry time, set up a timer to refresh the token
+    if (this.tokenExpiryTime > Date.now()) {
+      // Refresh when 75% of the token's lifetime has passed
+      const tokenLifetime = this.tokenExpiryTime - Date.now();
+      const refreshTime = Math.max(tokenLifetime * 0.75, 60000); // At least 1 minute before expiry
+      
+      this.refreshTimer = setTimeout(() => {
+        console.log('Token refresh timer triggered');
+        this.refreshTokenIfNeeded().catch(err => {
+          console.error('Error in scheduled token refresh:', err);
+        });
+      }, refreshTime);
+      
+      console.log(`Token refresh scheduled in ${refreshTime/1000} seconds`);
     }
   }
   
@@ -131,16 +131,11 @@ class AuthClient {
   }
   
   /**
-   * Get the auth token, refreshing if necessary
+   * Refresh the token if needed
    */
-  async getAuthToken(): Promise<string | null> {
-    // If circuit breaker is tripped, block the request
-    if (this.checkCircuitBreaker()) {
-      return null;
-    }
-    
+  private async refreshTokenIfNeeded(): Promise<string | null> {
     // If we have a valid token that's not expired, return it
-    if (this.authToken && this.tokenExpiryTime > Date.now()) {
+    if (this.tokenExpiryTime > Date.now() + 60000) { // 1 minute buffer
       return this.authToken;
     }
     
@@ -154,119 +149,203 @@ class AuthClient {
     // Update the last token refresh time
     this.lastTokenRefresh = now;
     
-    try {
-      // Get the Supabase session
-      const { data, error } = await supabase.auth.getSession();
-      
-      if (error) {
-        console.error('Error getting Supabase session:', error);
-        this.recordAuthFailure();
-        return null;
-      }
-      
-      if (!data.session?.access_token) {
-        console.debug('No Supabase session available');
-        return null;
-      }
-      
-      // Try to get a backend-specific token with retry logic
-      let retryCount = 0;
-      const maxRetries = 3;
-      
-      while (retryCount < maxRetries) {
-        try {
-          console.debug(`Token exchange attempt ${retryCount + 1}/${maxRetries}`);
+    // Add retry logic for token refresh
+    let retries = 3;
+    let lastError = null;
+    
+    while (retries > 0) {
+      try {
+        console.debug(`Attempting to refresh token (attempts remaining: ${retries})`);
+        
+        // Try to refresh the session first
+        const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+        
+        if (!refreshError && refreshData.session?.access_token) {
+          console.debug('Successfully refreshed Supabase session');
           
-          // Adjust the URL path to match the backend API structure
-          const apiUrl = API_BASE_URL;
-          // Remove '/api/v1' if it's included in the URL to avoid path duplication
-          const baseUrl = apiUrl.endsWith('/api/v1') 
-            ? apiUrl.replace('/api/v1', '') 
-            : apiUrl;
+          // Now exchange the refreshed token for a backend token
+          const success = await this.exchangeSupabaseToken(refreshData.session.access_token);
           
-          const response = await fetch(`${baseUrl}/api/auth/token`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${data.session.access_token}`
-            },
-            body: JSON.stringify({ token: data.session.access_token })
-          });
-          
-          if (!response.ok) {
-            const errorText = await response.text();
-            throw new Error(`Failed to get backend token: ${response.status} - ${errorText}`);
-          }
-          
-          const tokenData = await response.json();
-          
-          if (tokenData.access_token) {
-            console.debug('Using backend-specific token');
+          if (success) {
+            console.debug('Successfully exchanged token');
             
-            // Calculate expiry time (default to 1 hour if not provided)
-            const expirySeconds = tokenData.expires_in || 3600;
-            const expiryTime = now + (expirySeconds * 1000);
-            
-            // Save the token
-            this.authToken = tokenData.access_token;
-            this.tokenExpiryTime = expiryTime;
-            
-            // Save to localStorage
-            if (this.authToken) {
-              this.saveTokenToStorage(this.authToken, this.tokenExpiryTime);
-            }
-            
-            // Reset auth failure count
-            this.resetAuthFailureCount();
+            // Set up token refresh timer
+            this.setupTokenRefreshTimer();
             
             return this.authToken;
           }
           
-          // If we get here, something went wrong but didn't throw an error
-          throw new Error('Token response did not contain access_token');
-        } catch (tokenError) {
-          retryCount++;
+          // If token exchange failed, try again
+          throw new Error('Token exchange failed');
+        } else {
+          console.debug('Failed to refresh Supabase session, falling back to getSession');
           
-          if (retryCount >= maxRetries) {
-            console.error(`Error getting backend token after ${maxRetries} attempts:`, tokenError);
-            this.recordAuthFailure();
+          // Fall back to getting the current session
+          const { data, error } = await supabase.auth.getSession();
+          
+          if (error) {
+            console.error('Error getting Supabase session:', error);
+            throw error;
+          }
+          
+          if (!data.session?.access_token) {
+            console.debug('No Supabase session available');
+            throw new Error('No Supabase session available');
+          }
+          
+          // Exchange the token
+          const success = await this.exchangeSupabaseToken(data.session.access_token);
+          
+          if (success) {
+            console.debug('Successfully got token from current session');
             
-            // Fallback to using Supabase token directly
-            console.debug('Falling back to Supabase token');
-            this.authToken = data.session.access_token;
-            
-            // Calculate expiry time from the Supabase session
-            if (data.session.expires_at) {
-              const expiryTime = new Date(data.session.expires_at).getTime();
-              this.tokenExpiryTime = expiryTime;
-              
-              // Save to localStorage
-              this.saveTokenToStorage(this.authToken, this.tokenExpiryTime);
-            }
+            // Set up token refresh timer
+            this.setupTokenRefreshTimer();
             
             return this.authToken;
           }
           
+          // If getting token from current session failed, try again
+          throw new Error('Failed to get token from current session');
+        }
+      } catch (error) {
+        console.error(`Error refreshing token (attempt ${4 - retries}/3):`, error);
+        lastError = error;
+        retries--;
+        
+        if (retries > 0) {
           // Wait before retrying (exponential backoff)
-          const waitTime = Math.pow(2, retryCount) * 1000;
-          console.log(`Retrying token exchange in ${waitTime}ms (attempt ${retryCount}/${maxRetries})`);
+          const waitTime = Math.pow(2, 3 - retries) * 1000;
+          console.debug(`Waiting ${waitTime}ms before retrying...`);
           await new Promise(resolve => setTimeout(resolve, waitTime));
         }
       }
-      
-      return null;
-    } catch (error) {
-      console.error('Error in auth token acquisition:', error);
-      this.recordAuthFailure();
+    }
+    
+    // If all retries failed, record the failure and return null
+    console.error('All token refresh attempts failed:', lastError);
+    this.recordAuthFailure();
+    
+    return null;
+  }
+  
+  /**
+   * Exchange a Supabase token for a backend token
+   */
+  private async exchangeSupabaseToken(supabaseToken: string): Promise<boolean> {
+    let retryCount = 0;
+    const maxRetries = 3;
+    
+    while (retryCount < maxRetries) {
+      try {
+        console.debug(`Token exchange attempt ${retryCount + 1}/${maxRetries}`);
+        
+        // Adjust the URL path to match the backend API structure
+        const apiUrl = API_BASE_URL;
+        // Remove '/api/v1' if it's included in the URL to avoid path duplication
+        const baseUrl = apiUrl.endsWith('/api/v1') 
+          ? apiUrl.replace('/api/v1', '') 
+          : apiUrl;
+        
+        console.debug(`Making token exchange request to ${baseUrl}/api/auth/token`);
+        
+        const response = await fetch(`${baseUrl}/api/auth/token`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${supabaseToken}`
+          },
+          body: JSON.stringify({ token: supabaseToken }),
+          credentials: 'include' // Important: This enables sending/receiving cookies
+        });
+        
+        console.debug(`Token exchange response status: ${response.status}`);
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`Failed to get backend token: ${response.status} - ${errorText}`);
+        }
+        
+        const tokenData = await response.json();
+        
+        if (tokenData.success && tokenData.expires_at) {
+          console.debug('Successfully exchanged token');
+          
+          // Store the expiry time
+          this.tokenExpiryTime = tokenData.expires_at * 1000; // Convert to milliseconds if needed
+          
+          // Reset auth failure count
+          this.resetAuthFailureCount();
+          
+          return true;
+        }
+        
+        throw new Error('Token exchange response did not contain expected data');
+      } catch (tokenError) {
+        retryCount++;
+        
+        if (retryCount >= maxRetries) {
+          console.error(`Error getting backend token after ${maxRetries} attempts:`, tokenError);
+          this.recordAuthFailure();
+          return false;
+        }
+        
+        // Wait before retrying (exponential backoff)
+        const waitTime = Math.pow(2, retryCount) * 1000;
+        console.log(`Retrying token exchange in ${waitTime}ms (attempt ${retryCount}/${maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Get the auth token expiry time
+   */
+  getTokenExpiryTime(): number {
+    return this.tokenExpiryTime;
+  }
+  
+  /**
+   * Check if the user is authenticated
+   */
+  isAuthenticated(): boolean {
+    return this.tokenExpiryTime > Date.now();
+  }
+  
+  /**
+   * Get the auth token, refreshing if necessary
+   */
+  async getAuthToken(): Promise<string | null> {
+    // If circuit breaker is tripped, block the request
+    if (this.checkCircuitBreaker()) {
       return null;
     }
+    
+    // Try to refresh the token if needed
+    return await this.refreshTokenIfNeeded();
   }
   
   /**
    * Clear the auth token (e.g., on logout)
    */
   clearAuthToken(): void {
-    this.clearTokenStorage();
+    // Clear the token expiry cookie
+    deleteCookie(TOKEN_EXPIRY_KEY);
+    
+    // Clear the auth token cookie (will be done by the server)
+    // We'll make a request to the logout endpoint which will clear the cookie
+    
+    // Clear the token expiry time
+    this.tokenExpiryTime = 0;
+    this.authToken = null;
+    
+    // Clear the refresh timer
+    if (this.refreshTimer) {
+      clearTimeout(this.refreshTimer);
+      this.refreshTimer = null;
+    }
     
     // Also clear credits cache
     try {
@@ -304,11 +383,9 @@ class AuthClient {
         }
       }
       
-      // Get auth token
-      const token = await this.getAuthToken();
-      
-      if (!token) {
-        console.error('No access token available to fetch credits');
+      // Check if authenticated
+      if (!this.isAuthenticated()) {
+        console.error('Not authenticated, cannot fetch credits');
         return 0;
       }
       
@@ -321,9 +398,7 @@ class AuthClient {
         : apiUrl;
       
       const response = await fetch(`${baseUrl}/api/users/me/credits`, {
-        headers: {
-          'Authorization': `Bearer ${token || ''}`
-        }
+        credentials: 'include' // Important: This enables sending cookies
       });
       
       if (response.ok) {

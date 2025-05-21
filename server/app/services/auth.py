@@ -137,16 +137,33 @@ class AuthService:
         Returns:
             Optional[Dict[str, Any]]: User data if the token is valid, None otherwise
         """
-        # Verify the token using the Supabase service
-        user_data = supabase_service.verify_token(token)
-        
-        if not user_data:
-            logger.warning("Invalid Supabase token")
+        try:
+            logger.debug(f"Attempting to verify Supabase token (length: {len(token)})")
+            
+            # Verify the token using the Supabase service
+            user_data = supabase_service.verify_token(token)
+            
+            if not user_data:
+                logger.warning("Invalid Supabase token - verification returned None")
+                return None
+            
+            # Log successful verification with user ID
+            logger.info(f"Verified Supabase token for user: {user_data['id']}")
+            
+            # Log user metadata for debugging (excluding sensitive info)
+            safe_metadata = {
+                "id": user_data.get("id"),
+                "email": user_data.get("email", "").split("@")[0] + "@***" if user_data.get("email") else "",
+                "has_user_metadata": "user_metadata" in user_data,
+                "has_app_metadata": "app_metadata" in user_data,
+                "provider": user_data.get("app_metadata", {}).get("provider", "")
+            }
+            logger.debug(f"User metadata from token: {safe_metadata}")
+            
+            return user_data
+        except Exception as e:
+            logger.error(f"Error verifying Supabase token: {str(e)}")
             return None
-        
-        logger.info(f"Verified Supabase token for user: {user_data['id']}")
-        
-        return user_data
 
 # Create a global instance of the authentication service
 auth_service = AuthService()

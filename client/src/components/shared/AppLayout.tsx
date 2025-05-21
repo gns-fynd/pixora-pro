@@ -225,38 +225,40 @@ export function AppLayout({ children }: AppLayoutProps) {
       </main>
       
       {/* Footer */}
-      <footer className="border-t border-border/20 py-6 bg-background">
-        <div className="container mx-auto px-4">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-2">
-              <img src={logoSrc} alt="Pixora AI" className="h-6" />
-              <p className="text-sm text-muted-foreground">
-                © {new Date().getFullYear()} Pixora AI. All rights reserved.
-              </p>
-            </div>
-            <div className="flex items-center gap-4">
-              <a
-                href="#"
-                className="text-sm text-muted-foreground hover:text-primary transition-colors"
-              >
-                Terms
-              </a>
-              <a
-                href="#"
-                className="text-sm text-muted-foreground hover:text-primary transition-colors"
-              >
-                Privacy
-              </a>
-              <a
-                href="#"
-                className="text-sm text-muted-foreground hover:text-primary transition-colors"
-              >
-                Contact
-              </a>
+      {location.pathname !== "/scene-breakdown" && (
+        <footer className="border-t border-border/20 py-6 bg-background">
+          <div className="container mx-auto px-4">
+            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <img src={logoSrc} alt="Pixora AI" className="h-6" />
+                <p className="text-sm text-muted-foreground">
+                  © {new Date().getFullYear()} Pixora AI. All rights reserved.
+                </p>
+              </div>
+              <div className="flex items-center gap-4">
+                <a
+                  href="#"
+                  className="text-sm text-muted-foreground hover:text-primary transition-colors"
+                >
+                  Terms
+                </a>
+                <a
+                  href="#"
+                  className="text-sm text-muted-foreground hover:text-primary transition-colors"
+                >
+                  Privacy
+                </a>
+                <a
+                  href="#"
+                  className="text-sm text-muted-foreground hover:text-primary transition-colors"
+                >
+                  Contact
+                </a>
+              </div>
             </div>
           </div>
-        </div>
-      </footer>
+        </footer>
+      )}
     </div>
   );
 }

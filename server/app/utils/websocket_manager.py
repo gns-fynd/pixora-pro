@@ -298,7 +298,8 @@ class ConnectionManager:
             })
     
     async def handle_websocket(self, websocket: WebSocket, user_id: str, 
-                              message_handler: Callable[[str, Dict[str, Any]], Any]):
+                              message_handler: Callable[[str, Dict[str, Any]], Any],
+                              existing_connection_id: Optional[str] = None):
         """
         Handle a WebSocket connection.
         
@@ -306,22 +307,27 @@ class ConnectionManager:
             websocket: The WebSocket connection
             user_id: The ID of the user
             message_handler: A function to handle messages
+            existing_connection_id: Optional existing connection ID to use
         """
-        # Generate a unique connection ID
-        connection_id = str(uuid.uuid4())
+        # Use existing connection ID or generate a new one
+        connection_id = existing_connection_id or str(uuid.uuid4())
         
-        # Store the connection
-        self.active_connections[connection_id] = websocket
-        
-        # Associate the connection with the user
-        if user_id not in self.user_connections:
-            self.user_connections[user_id] = []
-        self.user_connections[user_id].append(connection_id)
-        
-        # Associate the connection with the user
-        self.connection_user[connection_id] = user_id
-        
-        logger.info(f"WebSocket connection established: {connection_id} for user {user_id}")
+        # Only store the connection if it's a new one
+        if not existing_connection_id:
+            # Store the connection
+            self.active_connections[connection_id] = websocket
+            
+            # Associate the connection with the user
+            if user_id not in self.user_connections:
+                self.user_connections[user_id] = []
+            self.user_connections[user_id].append(connection_id)
+            
+            # Associate the connection with the user
+            self.connection_user[connection_id] = user_id
+            
+            logger.info(f"WebSocket connection established: {connection_id} for user {user_id}")
+        else:
+            logger.info(f"Using existing WebSocket connection: {connection_id} for user {user_id}")
         
         try:
             # Send a welcome message
@@ -338,6 +344,14 @@ class ConnectionManager:
                 # Parse the message
                 try:
                     message_data = json.loads(message)
+                    
+                    # Log the received message for debugging
+                    logger.debug(f"Received WebSocket message from user {user_id}: {message_data}")
+                    
+                    # Ensure context is properly formatted
+                    if "context" in message_data and message_data["context"] is None:
+                        message_data["context"] = {}
+                    
                 except json.JSONDecodeError:
                     await self.send_message(connection_id, {
                         "type": "error",

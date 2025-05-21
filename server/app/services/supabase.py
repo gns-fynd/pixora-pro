@@ -100,22 +100,49 @@ class SupabaseService:
             return None
         
         try:
+            logger.debug(f"Making request to Supabase to verify token (URL: {self.url}/auth/v1/user)")
+            
             # Get user data from the token
+            headers = {
+                "apikey": self.key,
+                "Authorization": f"Bearer {token}"
+            }
+            
             response = httpx.get(
                 f"{self.url}/auth/v1/user",
-                headers={
-                    "apikey": self.key,
-                    "Authorization": f"Bearer {token}",
-                }
+                headers=headers
             )
             
+            logger.debug(f"Supabase token verification response status: {response.status_code}")
+            
             if response.status_code == 200:
-                return response.json()
+                user_data = response.json()
+                
+                # Log successful verification
+                logger.debug(f"Successfully verified token for user ID: {user_data.get('id', 'unknown')}")
+                
+                # Check if essential user data is present
+                if not user_data.get('id'):
+                    logger.warning("Token verification succeeded but user ID is missing")
+                
+                return user_data
             else:
+                # Log detailed error information
                 logger.error(f"Error verifying token: {response.status_code} - {response.text}")
+                
+                # Try to parse the error response for more details
+                try:
+                    error_data = response.json()
+                    logger.error(f"Supabase error details: {error_data}")
+                except:
+                    logger.error("Could not parse error response as JSON")
+                
                 return None
+        except httpx.RequestError as e:
+            logger.error(f"Network error verifying token: {str(e)}")
+            return None
         except Exception as e:
-            logger.error(f"Error verifying token: {str(e)}")
+            logger.error(f"Unexpected error verifying token: {str(e)}")
             return None
     
     def get_user(self, user_id: str) -> Optional[Dict[str, Any]]:
@@ -295,7 +322,12 @@ class SupabaseService:
             # Check if the update was successful
             if response.status_code == 204:
                 # Get the updated user data
-                return self.get_user(user_id)
+                user_data = self.get_user(user_id)
+                if user_data is None:
+                    # Create a minimal user data object if get_user returns None
+                    logger.warning(f"Could not retrieve updated user data for user {user_id}, returning minimal data")
+                    return {"id": user_id, "credits": credits}
+                return user_data
             else:
                 logger.error(f"Error updating user credits: {response.status_code} - {response.text}")
                 return None
@@ -334,7 +366,7 @@ class SupabaseService:
             logger.error(f"Error getting user tasks: {str(e)}")
             return []
     
-    def download_file(self, path: str, bucket: str = None) -> Optional[bytes]:
+    def download_file(self, path: str, bucket: Optional[str] = None) -> Optional[bytes]:
         """
         Download a file from Supabase storage.
         
@@ -349,7 +381,10 @@ class SupabaseService:
             logger.warning("Supabase storage not initialized. Cannot download file.")
             return None
         
-        return self.storage.download(path, bucket or self.bucket_name)
+        # Ensure bucket is not None
+        actual_bucket = bucket if bucket is not None else self.bucket_name
+        
+        return self.storage.download(path, actual_bucket)
 
 
 class SupabaseStorage:
@@ -388,7 +423,7 @@ class SupabaseStorage:
             logger.error(f"Error listing buckets: {str(e)}")
             return []
     
-    def create_bucket(self, name: str, options: Dict[str, Any] = None) -> bool:
+    def create_bucket(self, name: str, options: Optional[Dict[str, Any]] = None) -> bool:
         """
         Create a storage bucket
         

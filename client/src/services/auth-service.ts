@@ -30,6 +30,9 @@ const createErrorResponse = (error: unknown, defaultMessage: string): AuthRespon
   error: error instanceof Error ? error.message : defaultMessage,
 });
 
+// Global auth initialization promise to prevent race conditions
+let authInitPromise: Promise<AuthResponse> | null = null;
+
 /**
  * Authentication service for handling all auth operations with Supabase
  */
@@ -48,6 +51,11 @@ export const authService = {
       });
 
       if (error) throw error;
+
+      // If we have a session, exchange the token
+      if (data.session?.access_token) {
+        await authService.exchangeToken(data.session.access_token);
+      }
 
       return {
         user: data.user ? mapSupabaseUser(data.user) : null,
@@ -70,6 +78,11 @@ export const authService = {
       });
 
       if (error) throw error;
+
+      // Exchange the token for a backend token
+      if (data.session?.access_token) {
+        await authService.exchangeToken(data.session.access_token);
+      }
 
       return {
         user: data.user ? mapSupabaseUser(data.user) : null,
@@ -200,74 +213,120 @@ export const authService = {
    */
   signOut: async (): Promise<AuthResponse> => {
     try {
-      const { error } = await supabase.auth.signOut();
-
-      if (error) throw error;
-      
-      // Clear auth client token
+      // First, clear all local storage and cookies
       authClient.clearAuthToken();
       
-      // Clear all ongoing API requests
-      apiClient.clearAllRequests();
-      
-      // Clear cached auth state
+      // Clear all cached auth state
       try {
         localStorage.removeItem('pixora_auth_state');
         localStorage.removeItem('pixora_auth_state_expiry');
+        localStorage.removeItem('pixora_user_credits');
+        localStorage.removeItem('pixora_user_credits_expiry');
       } catch (cacheError) {
         console.error('Error clearing cached auth state:', cacheError);
       }
-
+      
+      // Make a request to the logout endpoint to clear server-side cookies
+      await apiClient.logout();
+      
+      // Then sign out from Supabase
+      const { error } = await supabase.auth.signOut();
+      if (error) throw error;
+      
+      // Clear API client state
+      apiClient.clearAllRequests();
+      
+      // Reset auth initialization promise
+      authInitPromise = null;
+      
       return {
         user: null,
         session: null,
         error: null,
       };
     } catch (error: unknown) {
+      console.error('Error during sign out:', error);
+      
+      // Even if there's an error, clear local state
+      authClient.clearAuthToken();
+      apiClient.clearAllRequests();
+      authInitPromise = null;
+      
       return createErrorResponse(error, 'Failed to sign out');
     }
   },
 
-  // Debounce mechanism to prevent multiple simultaneous session checks
-  _lastSessionCheck: 0,
-  _sessionCheckPromise: null as Promise<AuthResponse> | null,
+  /**
+   * Exchange a Supabase token for a backend token
+   * This is used after OAuth sign-in or when refreshing the session
+   */
+  exchangeToken: async (supabaseToken: string): Promise<boolean> => {
+    try {
+      // Adjust the URL path to match the backend API structure
+      const apiUrl = import.meta.env.VITE_API_URL;
+      const baseUrl = apiUrl.endsWith('/api/v1') 
+        ? apiUrl.replace('/api/v1', '') 
+        : apiUrl;
+      
+      const response = await fetch(`${baseUrl}/api/auth/token`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseToken}`
+        },
+        body: JSON.stringify({ token: supabaseToken }),
+        credentials: 'include' // Important: This enables sending/receiving cookies
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to exchange token: ${response.status} - ${errorText}`);
+      }
+      
+      const tokenData = await response.json();
+      
+      if (tokenData.success) {
+        console.debug('Successfully exchanged token');
+        return true;
+      }
+      
+      return false;
+    } catch (error) {
+      console.error('Error exchanging token:', error);
+      return false;
+    }
+  },
   
   /**
-   * Get current session with debouncing to prevent infinite loops
+   * Get current session with global initialization promise to prevent race conditions
    */
   getSession: async (): Promise<AuthResponse> => {
-    const now = Date.now();
-    
-    // If we've checked the session in the last 2 seconds, return the cached promise
-    if (now - authService._lastSessionCheck < 2000 && authService._sessionCheckPromise) {
-      console.log('Using cached session check (debounced)');
-      return authService._sessionCheckPromise;
+    // If we already have an initialization promise, return it
+    if (authInitPromise) {
+      return authInitPromise;
     }
     
-    // Update the last check time
-    authService._lastSessionCheck = now;
-    
-    // Create a new promise for this check
-    authService._sessionCheckPromise = (async () => {
+    // Create a new initialization promise
+    authInitPromise = (async () => {
       try {
         console.log('Performing session check');
         
-          // First try to get the user profile directly from the backend
-          // This will work if we've already exchanged the token
-          try {
-            const backendUser = await apiClient.get<User>('/api/users/me');
-            console.log('Successfully got user profile from backend');
-            
-            // If we got the user, we have a valid session
-            return {
-              user: backendUser,
-              session: null, // We don't need the session details
-              error: null,
-            };
-          } catch (error) {
-            console.log('Could not get user profile from backend, falling back to Supabase:', error);
-            // Fall back to Supabase if backend request fails
-          }
+        // First try to get the user profile directly from the backend
+        // This will work if we have a valid cookie
+        try {
+          const backendUser = await apiClient.get<User>('/api/users/me');
+          console.log('Successfully got user profile from backend');
+          
+          // If we got the user, we have a valid session
+          return {
+            user: backendUser,
+            session: null, // We don't need the session details
+            error: null,
+          };
+        } catch (backendError) {
+          console.log('Could not get user profile from backend, falling back to Supabase:', backendError);
+          // Fall back to Supabase if backend request fails
+        }
         
         // If backend request failed, try Supabase
         const { data: sessionData, error: sessionError } = await supabase.auth.getSession();
@@ -287,18 +346,33 @@ export const authService = {
         const { data: userData, error: userError } = await supabase.auth.getUser();
   
         if (userError) throw userError;
+        
+        // Exchange the token for a backend token
+        if (sessionData.session?.access_token) {
+          await authService.exchangeToken(sessionData.session.access_token);
+        }
   
         // We only set up the auth state change listener once
         if (!window._authListenerInitialized) {
           window._authListenerInitialized = true;
           
-          supabase.auth.onAuthStateChange((event, newSession) => {
+          supabase.auth.onAuthStateChange(async (event, newSession) => {
             console.log('Auth state changed:', event);
             if (event === 'TOKEN_REFRESHED' || event === 'SIGNED_IN') {
               console.log('Token refreshed or signed in, new session:', newSession?.expires_at);
-              // Don't call checkSession here - it will be handled by the Root component
+              
+              // Exchange the token for a backend token
+              if (newSession?.access_token) {
+                await authService.exchangeToken(newSession.access_token);
+              }
+              
+              // Reset the auth initialization promise so it will be refreshed on next check
+              authInitPromise = null;
             } else if (event === 'SIGNED_OUT') {
               console.log('Signed out');
+              // Reset the auth initialization promise
+              authInitPromise = null;
+              
               // You might want to redirect to login page here
               window.location.href = '/auth';
             }
@@ -325,10 +399,15 @@ export const authService = {
       } catch (error: unknown) {
         console.error('Session retrieval error:', error);
         return createErrorResponse(error, 'Failed to get session');
+      } finally {
+        // Reset the promise after a delay to allow for subsequent checks
+        setTimeout(() => {
+          authInitPromise = null;
+        }, 5000);
       }
     })();
     
-    return authService._sessionCheckPromise;
+    return authInitPromise;
   },
 
   /**
@@ -355,3 +434,10 @@ export const authService = {
     }
   },
 };
+
+// Add the auth listener initialized flag to the window object
+declare global {
+  interface Window {
+    _authListenerInitialized?: boolean;
+  }
+}

@@ -84,11 +84,20 @@ async def websocket_endpoint(websocket: WebSocket):
     WebSocket endpoint for real-time chat.
     """
     try:
-        # Get the token from the query parameters
-        token = websocket.query_params.get("token")
+        # Accept the connection first
+        await websocket.accept()
+        
+        # Get the token from cookies
+        cookies = websocket.cookies
+        token = cookies.get("pixora_auth_token")
         
         if not token:
-            await websocket.send_json({"error": "Token is required"})
+            # Try to get token from query parameters as fallback
+            token = websocket.query_params.get("token")
+            
+        if not token:
+            logger.warning("WebSocket connection attempt without token")
+            await websocket.send_json({"type": "error", "content": "Authentication token is required"})
             await websocket.close()
             return
         
@@ -96,21 +105,15 @@ async def websocket_endpoint(websocket: WebSocket):
         payload = auth_service.verify_session_token(token)
         
         if not payload:
-            await websocket.send_json({"error": "Invalid token"})
+            logger.warning("WebSocket connection attempt with invalid token")
+            await websocket.send_json({"type": "error", "content": "Invalid authentication token"})
             await websocket.close()
             return
+            
+        logger.info(f"WebSocket connection authenticated for user: {payload['sub']}")
         
         # Get the user ID from the token
         user_id = payload["sub"]
-        
-        # Connect the client to the connection manager
-        connection_id = await connection_manager.connect(websocket, user_id)
-        
-        # Send a welcome message
-        await connection_manager.send_message(connection_id, {
-            "type": "system",
-            "content": "Connected to Pixora AI WebSocket server"
-        })
         
         # Define the message handler
         async def handle_message(user_id: str, message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -118,7 +121,81 @@ async def websocket_endpoint(websocket: WebSocket):
             if "message" not in message_data:
                 return {"type": "error", "content": "Message field is required"}
             
-            # Process the message
+            # Extract context data
+            context = message_data.get("context", {})
+            
+            # Log the message and context for debugging
+            logger.info(f"Received message: {message_data['message'][:50]}... with context: {context}")
+            
+            # Check if this is a scene breakdown request with prompt data
+            if "scene breakdown" in message_data["message"].lower() and context and "prompt" in context:
+                logger.info(f"Generating script with prompt: {context['prompt'][:50]}...")
+                
+                try:
+                    # Generate script with the prompt data
+                    script_data = await chat_agent._generate_script(
+                        prompt=context["prompt"],
+                        character_consistency=False,
+                        duration=context.get("duration", 60),
+                        aspect_ratio=context.get("aspect_ratio", "16:9"),
+                        style=context.get("style", "cinematic")
+                    )
+                    
+                    # Create a task for tracking
+                    task_id = script_data["task_id"]
+                    connection_manager.create_task(
+                        user_id=user_id,
+                        task_type="scene_breakdown",
+                        metadata={"prompt": context["prompt"]}
+                    )
+                    
+                    # Update task status
+                    connection_manager.update_task_status(
+                        task_id,
+                        "completed",
+                        {"script": script_data}
+                    )
+                    
+                    # Transform the script data to match the client's expected format
+                    client_format = {
+                        "scenes": [],
+                        "script": {
+                            "title": "Scene Breakdown",
+                            "prompt": context["prompt"],
+                            "style": context.get("style", "cinematic"),
+                            "duration": context.get("duration", 60),
+                            "aspect_ratio": context.get("aspect_ratio", "16:9")
+                        }
+                    }
+                    
+                    # Extract scenes from the clips
+                    if "clips" in script_data:
+                        for i, clip in enumerate(script_data["clips"]):
+                            if "scene" in clip:
+                                scene = clip["scene"]
+                                client_format["scenes"].append({
+                                    "id": str(i + 1),
+                                    "visual": scene.get("video_prompt", ""),
+                                    "audio": scene.get("script", ""),
+                                    "narration": scene.get("script", ""),
+                                    "duration": scene.get("duration", 5)
+                                })
+                    
+                    # Return the transformed script data
+                    return {
+                        "type": "agent_message",
+                        "content": "Here's the scene breakdown for your video.",
+                        "data": client_format,
+                        "task_id": task_id
+                    }
+                except Exception as e:
+                    logger.error(f"Error generating script: {str(e)}")
+                    return {
+                        "type": "error",
+                        "content": f"Failed to generate script: {str(e)}"
+                    }
+            
+            # If not a scene breakdown request or no prompt data, process normally
             response = await chat_agent.process_message(
                 user_id,
                 message_data["message"],
@@ -135,8 +212,90 @@ async def websocket_endpoint(websocket: WebSocket):
             
             return response
         
-        # Handle messages
-        await connection_manager.handle_websocket(websocket, user_id, handle_message)
+        # Connection is already accepted, no need to accept again
+        
+        # Handle messages directly without creating a separate connection
+        try:
+            # Send a welcome message directly
+            await websocket.send_json({
+                "type": "system",
+                "content": "Connected to Pixora AI WebSocket server"
+            })
+            
+            # Handle messages in a loop
+            while True:
+                # Receive a message
+                message = await websocket.receive_text()
+                
+                # Parse the message
+                try:
+                    message_data = json.loads(message)
+                    
+                    # Ensure context is properly formatted
+                    if "context" in message_data and message_data["context"] is None:
+                        message_data["context"] = {}
+                    
+                    # Handle task status requests
+                    if message_data.get("type") == "task_status" and message_data.get("task_id"):
+                        task_id = message_data["task_id"]
+                        logger.info(f"Received task status request for task {task_id} from user {user_id}")
+                        
+                        # Get the task
+                        task = connection_manager.get_task(task_id)
+                        
+                        if not task:
+                            await websocket.send_json({
+                                "type": "task_status",
+                                "task_id": task_id,
+                                "status": "error",
+                                "message": "Task not found"
+                            })
+                            continue
+                        
+                        # Check if the task belongs to the user
+                        if task["user_id"] != user_id:
+                            await websocket.send_json({
+                                "type": "task_status",
+                                "task_id": task_id,
+                                "status": "error",
+                                "message": "Access denied"
+                            })
+                            continue
+                        
+                        # Send the task status
+                        await websocket.send_json({
+                            "type": "task_status",
+                            "task_id": task_id,
+                            "status": task["status"],
+                            "progress": task.get("metadata", {}).get("progress", 0),
+                            "message": task.get("metadata", {}).get("message"),
+                            "video_url": task.get("metadata", {}).get("video_url")
+                        })
+                        continue
+                    
+                    # Handle regular messages
+                    response = await handle_message(user_id, message_data)
+                    
+                    # Send the response
+                    if response:
+                        await websocket.send_json(response)
+                
+                except json.JSONDecodeError:
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": "Invalid JSON"
+                    })
+                    continue
+                except Exception as e:
+                    logger.error(f"Error handling message: {str(e)}")
+                    await websocket.send_json({
+                        "type": "error",
+                        "content": f"Error processing message: {str(e)}"
+                    })
+        except WebSocketDisconnect:
+            logger.info(f"WebSocket client disconnected: {user_id}")
+        except Exception as e:
+            logger.error(f"Error in WebSocket connection: {str(e)}")
     except WebSocketDisconnect:
         logger.info(f"WebSocket client disconnected")
     except Exception as e:

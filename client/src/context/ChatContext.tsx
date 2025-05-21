@@ -18,16 +18,20 @@ export interface GenerationProgress {
   status: 'pending' | 'processing' | 'completed' | 'error';
   message?: string;
   videoUrl?: string;
+  retryCount?: number;
 }
 
 interface ChatContextType {
   messages: ChatMessage[];
   addMessage: (message: ChatMessage) => void;
   clearMessages: () => void;
-  sendMessage: (content: string, context?: Record<string, unknown>) => Promise<void>;
+  sendMessage: (content: string, context?: Record<string, unknown>, silent?: boolean) => Promise<void>;
   executeAction: (action: ChatAction, context?: Record<string, unknown>) => Promise<void>;
   isProcessing: boolean;
   activeGeneration: GenerationProgress | null;
+  authInitialized: boolean;
+  authError: string | null;
+  latestSceneData: any | null; // Add latest scene data to context
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -36,63 +40,157 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [activeGeneration, setActiveGeneration] = useState<GenerationProgress | null>(null);
+  const [authInitialized, setAuthInitialized] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
   
   // Reference to the agent service
   const agentServiceRef = useRef<AgentService | null>(null);
   
-  // Initialize agent service
+  // Track initialization state to prevent multiple initializations
+  const isInitializingRef = useRef(false);
+  
+  // Initialize agent service only once, after auth is initialized and user is authenticated
   useEffect(() => {
-    const initAgentService = async () => {
+    let isMounted = true;
+
+    const tryInitAgentService = async () => {
+      if (isInitializingRef.current) {
+        return;
+      }
+      if (agentServiceRef.current) {
+        return;
+      }
+
+      const authStore = useAuthStore.getState();
+      if (!authStore.isInitialized || !authStore.user) {
+        // Wait for auth to be initialized and user to be authenticated
+        return;
+      }
+
+      isInitializingRef.current = true;
       try {
-        // Check if user is authenticated using auth store
-        const authStore = useAuthStore.getState();
-        if (!authStore.user) {
-          console.log('User not authenticated, skipping agent service initialization');
+        setAuthError(null);
+        const service = await createAgentService();
+        if (!isMounted) {
+          isInitializingRef.current = false;
           return;
         }
-        
-        const service = await createAgentService();
         agentServiceRef.current = service;
-        
-        // Connect to WebSocket
-        await service.connect();
-        
+
         // Register handlers
-        service.registerHandler('message', handleAgentMessage);
-        service.registerHandler('progress', handleProgressUpdate);
-        service.registerHandler('video', handleVideoComplete);
+        service.registerHandler('agent_message', handleAgentMessage);
+        service.registerHandler('progress_update', handleProgressUpdate);
+        service.registerHandler('video_complete', handleVideoComplete);
         service.registerHandler('error', handleError);
-        
-        console.log('Agent service initialized');
+
+        setAuthInitialized(true);
       } catch (error) {
-        console.error('Error initializing agent service:', error);
+        if (isMounted) {
+          setAuthError(error instanceof Error ? error.message : 'Unknown error');
+          setAuthInitialized(false);
+        }
+      } finally {
+        if (isMounted) {
+          isInitializingRef.current = false;
+        }
       }
     };
+
+    tryInitAgentService();
+
+    // Listen for auth state changes to re-attempt initialization
+    const unsubscribe = useAuthStore.subscribe(
+      (state) => {
+        if (state.isInitialized && state.user && !agentServiceRef.current && !isInitializingRef.current) {
+          tryInitAgentService();
+        }
+        if (state.isInitialized && !state.user) {
+          setAuthInitialized(false);
+          setAuthError('User not authenticated. Please log in to continue.');
+        }
+      }
+    );
+
+    return () => {
+      isMounted = false;
+      unsubscribe();
+      if (agentServiceRef.current) {
+        const service = agentServiceRef.current;
+        service.unregisterHandler('agent_message', handleAgentMessage);
+        service.unregisterHandler('progress_update', handleProgressUpdate);
+        service.unregisterHandler('video_complete', handleVideoComplete);
+        service.unregisterHandler('error', handleError);
+      }
+    };
+  }, []);
+  
+  // Handle auth state changes separately
+  useEffect(() => {
+    let isMounted = true;
     
-    // Initialize agent service when component mounts
-    initAgentService();
-    
-    // Also initialize when auth state changes
     const unsubscribe = useAuthStore.subscribe(
       (state: { isAuthenticated: boolean }) => {
         // Check if authentication state changed
-        if (state.isAuthenticated) {
+        if (state.isAuthenticated && !agentServiceRef.current && !isInitializingRef.current) {
+          // Initialize if authenticated and not already initializing
+          const initAgentService = async () => {
+            isInitializingRef.current = true;
+            try {
+              console.log('Auth state changed, initializing agent service');
+              const service = await createAgentService();
+              
+              // Only proceed if component is still mounted
+              if (!isMounted) {
+                isInitializingRef.current = false;
+                return;
+              }
+              
+              agentServiceRef.current = service;
+              
+              // Register handlers
+              service.registerHandler('message', handleAgentMessage);
+              service.registerHandler('progress', handleProgressUpdate);
+              service.registerHandler('video', handleVideoComplete);
+              service.registerHandler('error', handleError);
+              
+              setAuthInitialized(true);
+              setAuthError(null);
+            } catch (error) {
+              console.error('Error initializing agent service after auth change:', error);
+              if (isMounted) {
+                const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                setAuthError(`Authentication error: ${errorMessage}`);
+                setAuthInitialized(false);
+              }
+            } finally {
+              if (isMounted) {
+                isInitializingRef.current = false;
+              }
+            }
+          };
+          
           initAgentService();
-        } else if (agentServiceRef.current) {
-          // Disconnect if user logs out
-          agentServiceRef.current.disconnect();
+        } else if (!state.isAuthenticated && agentServiceRef.current) {
+          // Just unregister handlers if logged out, don't disconnect
+          const service = agentServiceRef.current;
+          service.unregisterHandler('message', handleAgentMessage);
+          service.unregisterHandler('progress', handleProgressUpdate);
+          service.unregisterHandler('video', handleVideoComplete);
+          service.unregisterHandler('error', handleError);
+          
           agentServiceRef.current = null;
+          
+          if (isMounted) {
+            setAuthInitialized(false);
+            setAuthError('User logged out. Please log in to continue.');
+          }
         }
       }
     );
     
     // Cleanup on unmount
     return () => {
-      if (agentServiceRef.current) {
-        agentServiceRef.current.disconnect();
-        agentServiceRef.current = null;
-      }
-      // Unsubscribe from auth store
+      isMounted = false;
       unsubscribe();
     };
   }, []);
@@ -134,7 +232,16 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [messages]);
   
   // Handle agent message from WebSocket
-  const handleAgentMessage = (data: AgentMessageData) => {
+  // Store the latest scene breakdown data for use in the scene breakdown UI
+  const latestSceneDataRef = useRef<any>(null);
+  const [latestSceneData, setLatestSceneData] = useState<any | null>(null);
+
+  const handleAgentMessage = (data: AgentMessageData & { data?: any }) => {
+    if (data.data) {
+      // Store the scene breakdown data for use in the scene breakdown UI
+      latestSceneDataRef.current = data.data;
+      setLatestSceneData(data.data); // Trigger re-render
+    }
     if (data.content) {
       addMessage({
         role: 'assistant',
@@ -143,7 +250,6 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         timestamp: new Date()
       });
     }
-    
     setIsProcessing(false);
   };
   
@@ -202,13 +308,13 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
   
   const addMessage = (message: ChatMessage) => {
-    // Check if this is a duplicate message (same content and role within the last 2 seconds)
-    const isDuplicate = messages.some(existingMsg => 
-      existingMsg.role === message.role && 
-      existingMsg.content === message.content &&
-      message.timestamp.getTime() - existingMsg.timestamp.getTime() < 2000
+    // Aggressive deduplication: prevent adding if the same content and role exist in the last 5 messages
+    const recentMessages = messages.slice(-5);
+    const isDuplicate = recentMessages.some(existingMsg =>
+      existingMsg.role === message.role &&
+      existingMsg.content === message.content
     );
-    
+
     if (!isDuplicate) {
       setMessages(prev => [...prev, message]);
     } else {
@@ -228,76 +334,106 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
   
   // Send a message to the agent
-  const sendMessage = async (content: string, context?: Record<string, unknown>) => {
+  const sendMessage = async (
+    content: string,
+    context?: Record<string, unknown>,
+    silent: boolean = false
+  ) => {
     if (!content.trim()) return;
-    
-    // Add user message to chat
-    addMessage({
-      role: 'user',
-      content,
-      timestamp: new Date()
-    });
-    
+
+    // Log the message and context for debugging
+    console.log('Sending message to agent:', { content, context, silent });
+
+    // Add user message to chat unless silent
+    if (!silent) {
+      addMessage({
+        role: 'user',
+        content,
+        timestamp: new Date()
+      });
+    }
+
     setIsProcessing(true);
-    
+
     try {
-      // Try to use WebSocket if connected
-      if (agentServiceRef.current && agentServiceRef.current.isConnected()) {
-        agentServiceRef.current.sendMessageWs(content, context);
-      } else {
-        // Fall back to REST API
-        if (!agentServiceRef.current) {
+      // Ensure we have an agent service
+      if (!agentServiceRef.current && !isInitializingRef.current) {
+        console.log('Creating new agent service before sending message');
+        isInitializingRef.current = true;
+        try {
           agentServiceRef.current = await createAgentService();
+          setAuthInitialized(true);
+        } finally {
+          isInitializingRef.current = false;
         }
-        
-        const response = await agentServiceRef.current.sendMessage(content, context);
-        
-        // Add assistant response to chat
-        addMessage({
-          role: 'assistant',
-          content: response.content,
-          actions: response.actions || [],
-          timestamp: new Date()
-        });
-        
-        // If a task was created, set active generation
-        if (response.task_id) {
-          setActiveGeneration({
-            taskId: response.task_id,
-            progress: 0,
-            status: 'processing',
-            message: 'Starting generation...'
-          });
-          
-          // Start polling for status
-          pollTaskStatus(response.task_id);
-        }
-        
-        setIsProcessing(false);
+      } else if (!agentServiceRef.current) {
+        throw new Error('Agent service is initializing, please try again in a moment');
       }
+
+      // Always use WebSocket for chat messages
+      const formattedContext = context ? { ...context } : {};
+
+      // Ensure WebSocket is connected before sending
+      if (!agentServiceRef.current.isConnected()) {
+        console.log('WebSocket not connected, attempting to connect...');
+        await agentServiceRef.current.connect();
+      }
+
+      // Ensure prompt is properly formatted if it exists in context
+      if (formattedContext.prompt && typeof formattedContext.prompt === 'string') {
+        console.log('Prompt found in context:', formattedContext.prompt);
+      }
+
+      agentServiceRef.current.sendMessageWs(content, formattedContext);
     } catch (error) {
       console.error('Error sending message:', error);
-      
+
       // Add error message
       addMessage({
         role: 'assistant',
         content: 'Sorry, I encountered an error processing your request. Please try again.',
         timestamp: new Date()
       });
-      
+
       setIsProcessing(false);
     }
   };
   
   // Execute an action
   const executeAction = async (action: ChatAction, context?: Record<string, unknown>) => {
-    if (!agentServiceRef.current) {
+    // Log the action and context for debugging
+    console.log('Executing action:', { action, context });
+    
+    // Ensure we have an agent service
+    if (!agentServiceRef.current && !isInitializingRef.current) {
       try {
+        console.log('Creating new agent service before executing action');
+        isInitializingRef.current = true;
         agentServiceRef.current = await createAgentService();
+        setAuthInitialized(true);
       } catch (error) {
         console.error('Error creating agent service:', error);
+        
+        // Add error message
+        addMessage({
+          role: 'assistant',
+          content: 'Sorry, I encountered an error connecting to the server. Please try again.',
+          timestamp: new Date()
+        });
+        
         return;
+      } finally {
+        isInitializingRef.current = false;
       }
+    } else if (!agentServiceRef.current) {
+      // Add error message if service is initializing
+      addMessage({
+        role: 'assistant',
+        content: 'Service is initializing, please try again in a moment.',
+        timestamp: new Date()
+      });
+      
+      return;
     }
     
     // Add user message about the action
@@ -329,28 +465,40 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setIsProcessing(true);
     
     try {
-      // Execute the action
-      const response = await agentServiceRef.current.executeAction(action, context);
+      // Format context for better compatibility
+      const formattedContext = context ? { ...context } : {};
       
-      // Add assistant response to chat
+      // Ensure prompt is properly formatted if it exists in context
+      if (formattedContext.prompt && typeof formattedContext.prompt === 'string') {
+        console.log('Prompt found in context:', formattedContext.prompt);
+      }
+      
+      // Execute the action via WebSocket
+      console.log('Sending action to agent service via WebSocket');
+      agentServiceRef.current.executeAction(action, formattedContext);
+      
+      // Add a processing message
       addMessage({
         role: 'assistant',
-        content: response.content,
-        actions: response.actions || [],
+        content: 'Processing your request...',
         timestamp: new Date()
       });
       
-      // If a task was created, set active generation
-      if (response.task_id) {
+      // For video generation actions, set active generation
+      if (action.type === 'generate_video') {
+        // Create a task ID for tracking
+        const taskId = crypto.randomUUID();
+        console.log('Created task ID for video generation:', taskId);
+        
         setActiveGeneration({
-          taskId: response.task_id,
+          taskId,
           progress: 0,
           status: 'processing',
-          message: 'Starting generation...'
+          message: 'Starting video generation...'
         });
         
         // Start polling for status
-        pollTaskStatus(response.task_id);
+        pollTaskStatus(taskId);
       }
       
       setIsProcessing(false);
@@ -368,13 +516,73 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
   
-  // Poll for task status
+  // Register a handler for task status updates
+  useEffect(() => {
+    if (agentServiceRef.current) {
+      // Register handler for task status updates
+      agentServiceRef.current.registerHandler('task_status', handleTaskStatus);
+      
+      // Clean up on unmount
+      return () => {
+        if (agentServiceRef.current) {
+          agentServiceRef.current.unregisterHandler('task_status', handleTaskStatus);
+        }
+      };
+    }
+  }, []);
+  
+  // Handle task status updates from WebSocket
+  const handleTaskStatus = (data: AgentMessageData) => {
+    if (data.task_id) {
+      console.log(`Received task status update for task ${data.task_id}:`, data);
+      
+      setActiveGeneration({
+        taskId: data.task_id,
+        progress: data.progress || 0,
+        status: data.status as 'pending' | 'processing' | 'completed' | 'error',
+        message: data.message,
+        videoUrl: data.video_url
+      });
+      
+      // If task is completed with a video URL, add a message
+      if (data.status === 'completed' && data.video_url) {
+        console.log(`Task ${data.task_id} completed with video URL:`, data.video_url);
+        
+        // Add message about video completion
+        addMessage({
+          role: 'assistant',
+          content: `Your video is ready! You can view it now.`,
+          timestamp: new Date()
+        });
+      } else if (data.status === 'error') {
+        console.error(`Task ${data.task_id} failed with error:`, data.message);
+        
+        // Add error message
+        addMessage({
+          role: 'assistant',
+          content: `Sorry, there was an error generating your video: ${data.message || 'Unknown error'}`,
+          timestamp: new Date()
+        });
+      }
+    }
+  };
+  
+  // Poll for task status using WebSocket
   const pollTaskStatus = async (taskId: string) => {
-    if (!agentServiceRef.current) return;
+    if (!agentServiceRef.current) {
+      console.error('Cannot poll task status: agent service is not initialized');
+      return;
+    }
+    
+    console.log(`Polling status for task ${taskId} via WebSocket`);
     
     try {
+      // Get task status via WebSocket
       const status = await agentServiceRef.current.getTaskStatus(taskId);
       
+      console.log(`Task ${taskId} status:`, status);
+      
+      // Update active generation
       setActiveGeneration({
         taskId,
         progress: status.progress,
@@ -385,17 +593,69 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       
       // If task is still processing, poll again after a delay
       if (status.status === 'processing' || status.status === 'pending') {
+        console.log(`Task ${taskId} is still processing, polling again in 2 seconds`);
         setTimeout(() => pollTaskStatus(taskId), 2000);
       } else if (status.status === 'completed' && status.video_url) {
+        console.log(`Task ${taskId} completed with video URL:`, status.video_url);
+        
         // Add message about video completion
         addMessage({
           role: 'assistant',
           content: `Your video is ready! You can view it now.`,
           timestamp: new Date()
         });
+      } else if (status.status === 'error') {
+        console.error(`Task ${taskId} failed with error:`, status.message);
+        
+        // Add error message
+        addMessage({
+          role: 'assistant',
+          content: `Sorry, there was an error generating your video: ${status.message || 'Unknown error'}`,
+          timestamp: new Date()
+        });
       }
     } catch (error) {
-      console.error('Error polling task status:', error);
+      console.error(`Error polling task status for task ${taskId}:`, error);
+      
+      // Retry polling after a delay, but with a maximum number of retries
+      const maxRetries = 3;
+      const retryCount = (activeGeneration?.retryCount || 0) + 1;
+      
+      if (retryCount <= maxRetries) {
+        console.log(`Retrying poll for task ${taskId} (attempt ${retryCount}/${maxRetries})`);
+        
+        // Update retry count in active generation
+        setActiveGeneration(prev => {
+          if (!prev || prev.taskId !== taskId) return prev;
+          return {
+            ...prev,
+            retryCount
+          };
+        });
+        
+        // Retry after a delay with exponential backoff
+        const retryDelay = Math.pow(2, retryCount) * 1000;
+        setTimeout(() => pollTaskStatus(taskId), retryDelay);
+      } else {
+        console.error(`Exceeded maximum retries (${maxRetries}) for task ${taskId}`);
+        
+        // Update status to error
+        setActiveGeneration(prev => {
+          if (!prev || prev.taskId !== taskId) return prev;
+          return {
+            ...prev,
+            status: 'error',
+            message: 'Failed to get task status after multiple attempts'
+          };
+        });
+        
+        // Add error message
+        addMessage({
+          role: 'assistant',
+          content: 'Sorry, I lost connection with the server. Please try again.',
+          timestamp: new Date()
+        });
+      }
     }
   };
   
@@ -407,7 +667,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
       sendMessage, 
       executeAction, 
       isProcessing, 
-      activeGeneration 
+      activeGeneration,
+      authInitialized,
+      authError,
+      latestSceneData
     }}>
       {children}
     </ChatContext.Provider>

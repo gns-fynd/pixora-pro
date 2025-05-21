@@ -1,7 +1,7 @@
 """
 Users API for Pixora AI Video Creation Platform
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Cookie
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from typing import Dict, Any, Optional
@@ -10,6 +10,7 @@ import logging
 # Import services
 from ..services.auth import auth_service
 from ..services.supabase import supabase_service
+from .auth import get_current_user, AUTH_COOKIE_NAME
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -18,7 +19,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 # Security scheme
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 # Models
 class UserResponse(BaseModel):
@@ -32,29 +33,20 @@ class CreditsResponse(BaseModel):
 
 # Get current user endpoint
 @router.get("/me", response_model=UserResponse)
-async def get_current_user(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+async def get_user_info(
+    user_data: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Get information about the authenticated user.
     """
     try:
-        # Verify the session token
-        payload = auth_service.verify_session_token(credentials.credentials)
-        
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token"
-            )
-        
-        # Get the user ID from the token
-        user_id = payload["sub"]
+        # Get the user ID from the user data
+        user_id = user_data["id"]
         
         # Get the user from Supabase
-        user_data = supabase_service.get_user(user_id)
+        supabase_user = supabase_service.get_user(user_id)
         
-        if not user_data:
+        if not supabase_user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
@@ -63,9 +55,9 @@ async def get_current_user(
         # Return the user info
         return {
             "id": user_id,
-            "email": payload.get("email", ""),
-            "name": payload.get("name", ""),
-            "credits": user_data.get("credits", 0)
+            "email": user_data.get("email", ""),
+            "name": user_data.get("name", ""),
+            "credits": supabase_user.get("credits", 0)
         }
     except HTTPException:
         raise
@@ -79,28 +71,19 @@ async def get_current_user(
 # Get user credits endpoint
 @router.get("/me/credits", response_model=CreditsResponse)
 async def get_user_credits(
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    user_data: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Get the credits for the authenticated user.
     """
     try:
-        # Verify the session token
-        payload = auth_service.verify_session_token(credentials.credentials)
-        
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token"
-            )
-        
-        # Get the user ID from the token
-        user_id = payload["sub"]
+        # Get the user ID from the user data
+        user_id = user_data["id"]
         
         # Get the user's credits from Supabase
-        user_data = supabase_service.get_user(user_id)
+        supabase_user = supabase_service.get_user(user_id)
         
-        if not user_data:
+        if not supabase_user:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="User not found"
@@ -108,7 +91,7 @@ async def get_user_credits(
         
         # Return the credits
         return {
-            "credits": user_data.get("credits", 0)
+            "credits": supabase_user.get("credits", 0)
         }
     except HTTPException:
         raise
@@ -123,23 +106,14 @@ async def get_user_credits(
 @router.post("/me/credits", response_model=CreditsResponse)
 async def update_user_credits(
     request: Dict[str, Any],
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    user_data: Dict[str, Any] = Depends(get_current_user)
 ):
     """
     Update the credits for the authenticated user.
     """
     try:
-        # Verify the session token
-        payload = auth_service.verify_session_token(credentials.credentials)
-        
-        if not payload:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token"
-            )
-        
-        # Get the user ID from the token
-        user_id = payload["sub"]
+        # Get the user ID from the user data
+        user_id = user_data["id"]
         
         # Get the credits from the request
         credits = request.get("credits")

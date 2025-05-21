@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 from app.api.chat import router as chat_router
 from app.api.auth import router as auth_router
 from app.api.users import router as users_router
+from app.api.videos import router as videos_router
 
 # Import services
 from app.services.auth import auth_service
@@ -51,7 +52,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=["http://localhost:5173"],  # Use specific origin for dev
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -107,6 +108,7 @@ async def log_requests(request: Request, call_next):
 app.include_router(chat_router)
 app.include_router(auth_router)
 app.include_router(users_router)
+app.include_router(videos_router)
 
 # Health check endpoint
 @app.get("/api/health")
@@ -225,8 +227,18 @@ async def startup_event():
     # Initialize Supabase if configured
     if os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY"):
         from app.services.supabase import supabase_service
+        from app.utils.file_utils import ensure_storage_buckets
+        
+        # Initialize Supabase service
         supabase_service.initialize()
         logger.info("Supabase service initialized")
+        
+        # Ensure storage buckets exist
+        try:
+            ensure_storage_buckets()
+            logger.info("Supabase storage buckets ensured")
+        except Exception as e:
+            logger.warning(f"Failed to ensure storage buckets: {str(e)}")
     else:
         logger.warning("Supabase not configured. Some features may not work properly.")
     

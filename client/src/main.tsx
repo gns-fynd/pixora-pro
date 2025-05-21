@@ -24,36 +24,29 @@ import Profile from "@/pages/profile";
 import LoaderDemo from "@/pages/loader-demo";
 import { AppLayout } from "@/components/shared/AppLayout";
 
-// Global flag to track if session has been checked
-let sessionChecked = false;
+// Global auth initialization promise to prevent race conditions
+let authInitPromise: Promise<void> | null = null;
 
 // Root component to handle global session check
 const Root = ({ children }: { children: React.ReactNode }) => {
-  const { checkSession, isLoading } = useAuthStore();
+  const { initializeAuth, isLoading } = useAuthStore();
   
   useEffect(() => {
-    // Check session on app load - only once
-    const initializeAuth = async () => {
-      // Only check session if it hasn't been checked yet
-      if (!sessionChecked) {
-        try {
-          console.log('Checking session on app initialization (Root component)');
-          await checkSession();
-          // Set the flag to true after checking
-          sessionChecked = true;
-        } catch (err) {
-          console.error('Error checking session on app initialization:', err);
-        }
-      } else {
-        console.debug('Session already checked, skipping initialization check');
+    // Initialize auth on app load
+    const initAuth = async () => {
+      try {
+        console.log('Initializing auth on app load (Root component)');
+        await initializeAuth();
+      } catch (err) {
+        console.error('Error initializing auth on app load:', err);
       }
     };
     
-    // Only run this once on mount
-    initializeAuth();
+    // Run initialization
+    initAuth();
     
-    // No periodic checks - we'll rely on Supabase's built-in refresh mechanism
-  }, [checkSession]);
+    // No need for cleanup since initializeAuth handles its own state
+  }, [initializeAuth]);
   
   if (isLoading) {
     return (
@@ -67,7 +60,6 @@ const Root = ({ children }: { children: React.ReactNode }) => {
   
   return <>{children}</>;
 };
-
 
 // Layout wrapper for authenticated routes
 const AuthenticatedLayout = () => {
@@ -136,6 +128,32 @@ const router = createBrowserRouter([
     ],
   },
 ]);
+
+// Make the auth initialization promise available globally
+// This allows other components to wait for auth to be initialized
+declare global {
+  interface Window {
+    initializeAuth: () => Promise<void>;
+  }
+}
+
+// Create a global function to initialize auth
+window.initializeAuth = async () => {
+  if (!authInitPromise) {
+    authInitPromise = (async () => {
+      try {
+        console.log('Initializing global auth state');
+        await useAuthStore.getState().initializeAuth();
+        console.log('Global auth state initialized');
+      } catch (err) {
+        console.error('Error initializing global auth state:', err);
+        // Reset the promise so we can try again
+        authInitPromise = null;
+      }
+    })();
+  }
+  return authInitPromise;
+};
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

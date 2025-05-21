@@ -50,6 +50,7 @@ class ApiClient {
       headers: {
         'Content-Type': 'application/json',
       },
+      withCredentials: true, // Important: This enables sending cookies with requests
     });
 
     // Add request interceptor for authentication
@@ -60,6 +61,8 @@ class ApiClient {
           config.headers.Authorization = `Bearer ${this.authToken}`;
         } else {
           // Fall back to getting the token from the auth client
+          // Note: With cookie-based auth, this might not be needed for most requests
+          // but we keep it for backward compatibility and for APIs that still require token auth
           const token = await authClient.getAuthToken();
           
           // If we have a token, add it to the request
@@ -80,10 +83,36 @@ class ApiClient {
     this.client.interceptors.response.use(
       (response) => response,
       async (error: AxiosError<ApiErrorResponse>) => {
+        // Handle authentication errors (401)
+        if (error.response?.status === 401) {
+          // Try to refresh the token
+          const refreshed = await this.handleAuthError();
+          
+          // If token was refreshed successfully, retry the request
+          if (refreshed && error.config) {
+            console.debug('Retrying request after token refresh');
+            return this.client.request(error.config);
+          }
+        }
+        
         // Handle API errors
         return this.handleApiError(error);
       }
     );
+  }
+
+  /**
+   * Handle authentication errors by attempting to refresh the token
+   */
+  private async handleAuthError(): Promise<boolean> {
+    try {
+      // Try to refresh the token
+      const token = await authClient.getAuthToken();
+      return !!token;
+    } catch (error) {
+      console.error('Error refreshing token:', error);
+      return false;
+    }
   }
 
   /**
@@ -463,10 +492,39 @@ class ApiClient {
     // Clear the last request time record
     this.lastRequestTime = {};
     
+    // Clear the auth token
+    this.authToken = null;
+    
     // Add a small delay to allow pending operations to complete
     setTimeout(() => {
       // This space intentionally left blank
     }, 500);
+  }
+  
+  /**
+   * Logout the user by making a request to the logout endpoint
+   * This will clear the auth cookies on the server side
+   */
+  async logout(): Promise<void> {
+    try {
+      // Make a request to the logout endpoint
+      const baseUrl = API_BASE_URL.endsWith('/api/v1') 
+        ? API_BASE_URL.replace('/api/v1', '') 
+        : API_BASE_URL;
+      
+      await this.post(`${baseUrl}/api/auth/logout`, {}, { withCredentials: true });
+      
+      // Clear the auth token
+      this.authToken = null;
+      
+      // Clear all ongoing requests
+      this.clearAllRequests();
+    } catch (error) {
+      console.error('Error logging out:', error);
+      // Even if the logout request fails, clear the local state
+      this.authToken = null;
+      this.clearAllRequests();
+    }
   }
 }
 

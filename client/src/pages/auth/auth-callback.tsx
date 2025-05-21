@@ -63,13 +63,19 @@ export const AuthCallback = () => {
             ? apiUrl.replace('/api/v1', '') 
             : apiUrl;
           
+          console.log(`Making token exchange request to ${baseUrl}/api/auth/token`);
+          
           const response = await fetch(`${baseUrl}/api/auth/token`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               'Authorization': `Bearer ${data.session.access_token}`
-            }
+            },
+            credentials: 'include', // Important: This enables sending/receiving cookies
+            body: JSON.stringify({ token: data.session.access_token }) // Explicitly include token in body
           });
+          
+          console.log(`Token exchange response status: ${response.status}`);
           
           if (!response.ok) {
             const errorData = await response.text();

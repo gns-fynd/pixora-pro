@@ -5,7 +5,7 @@ import os
 import json
 import uuid
 import asyncio
-from typing import Dict, Any, List, Optional, Tuple, Union
+from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 import logging
 import openai
@@ -714,13 +714,14 @@ class ChatAgent:
             # Save the script to Supabase storage
             save_script(task_storage_path, script_data)
             
-            # Save the script to the database
-            if supabase_service.client:
-                supabase_service.save_script(task_id, script_data)
-            
-            # Create a task in the database
-            if supabase_service.client:
-                supabase_service.create_task(user_id="user_1", task_id=task_id, prompt=prompt)
+            # Create a task in the database if Supabase is configured
+            try:
+                if hasattr(supabase_service, 'client') and supabase_service.client:
+                    supabase_service.create_task(user_id="user_1", task_id=task_id, prompt=prompt)
+                    logger.info(f"Created task in database: {task_id}")
+            except Exception as e:
+                logger.warning(f"Failed to create task in database: {str(e)}")
+                # Continue execution even if database operations fail
             
             return script_data
         except Exception as e:

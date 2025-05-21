@@ -23,7 +23,7 @@ STORAGE_TYPE = os.getenv("STORAGE_TYPE", "supabase")
 
 def ensure_storage_buckets():
     """Ensure all storage buckets exist in Supabase."""
-    if not supabase_service.storage:
+    if not hasattr(supabase_service, 'storage') or not supabase_service.storage:
         logger.warning("Supabase storage not initialized. Cannot ensure buckets exist.")
         return
     
@@ -32,13 +32,22 @@ def ensure_storage_buckets():
     for bucket_name in buckets:
         try:
             # Check if the bucket exists
-            all_buckets = supabase_service.storage.list_buckets()
-            bucket_exists = any(bucket["name"] == bucket_name for bucket in all_buckets)
+            try:
+                all_buckets = supabase_service.storage.list_buckets()
+                bucket_exists = any(bucket["name"] == bucket_name for bucket in all_buckets)
+            except Exception as e:
+                logger.warning(f"Error listing buckets: {str(e)}")
+                # Assume bucket doesn't exist if we can't list buckets
+                bucket_exists = False
             
             # Create the bucket if it doesn't exist
             if not bucket_exists:
-                supabase_service.storage.create_bucket(bucket_name, {"public": True})
-                logger.info(f"Created Supabase storage bucket: {bucket_name}")
+                try:
+                    supabase_service.storage.create_bucket(bucket_name, {"public": True})
+                    logger.info(f"Created Supabase storage bucket: {bucket_name}")
+                except Exception as e:
+                    logger.warning(f"Error creating bucket {bucket_name}: {str(e)}")
+                    # Continue with next bucket even if this one fails
         except Exception as e:
             logger.error(f"Error ensuring bucket {bucket_name} exists: {str(e)}")
 
@@ -126,55 +135,103 @@ def save_file(file_content: bytes, storage_path: str, bucket_name: str = VIDEOS_
     Returns:
         Dict: Information about the saved file
     """
-    if not supabase_service.storage:
-        logger.warning("Supabase storage not initialized. Cannot save file.")
-        # Create a temporary file as fallback
+    # Create a temporary file as fallback
+    temp_path = None
+    try:
         with tempfile.NamedTemporaryFile(delete=False) as temp_file:
             temp_file.write(file_content)
             temp_path = temp_file.name
-        
-        logger.info(f"Saved file to temporary location: {temp_path}")
-        
-        # Return information about the saved file
-        return {
-            "path": storage_path,
-            "url": f"/api/fallback/{storage_path}",
-            "size": len(file_content),
-            "temp_path": temp_path
-        }
+        logger.debug(f"Created temporary file: {temp_path}")
+    except Exception as e:
+        logger.warning(f"Failed to create temporary file: {str(e)}")
     
+    # Check if Supabase storage is available
+    if not hasattr(supabase_service, 'storage') or not supabase_service.storage:
+        logger.warning("Supabase storage not initialized. Using local storage fallback.")
+        
+        if temp_path:
+            logger.info(f"Saved file to temporary location: {temp_path}")
+            
+            # Return information about the saved file
+            return {
+                "path": storage_path,
+                "url": f"/api/fallback/{storage_path}",
+                "size": len(file_content),
+                "temp_path": temp_path
+            }
+        else:
+            # If we couldn't create a temporary file, return minimal information
+            return {
+                "path": storage_path,
+                "url": f"/api/fallback/{storage_path}",
+                "size": len(file_content)
+            }
+    
+    # Try to save to Supabase
     try:
+        # Ensure the bucket exists
+        try:
+            ensure_storage_buckets()
+        except Exception as e:
+            logger.warning(f"Error ensuring buckets exist: {str(e)}")
+        
+        # Create parent directories if needed
+        parent_dir = os.path.dirname(storage_path)
+        if parent_dir:
+            try:
+                # This is a no-op in Supabase, but we keep it for clarity
+                logger.debug(f"Ensuring parent directory exists: {parent_dir}")
+            except Exception as e:
+                logger.warning(f"Error ensuring parent directory exists: {str(e)}")
+        
         # Upload the file to Supabase
-        supabase_service.storage.from_(bucket_name).upload(storage_path, file_content)
+        try:
+            supabase_service.storage.from_(bucket_name).upload(storage_path, file_content)
+            logger.info(f"Saved file to Supabase storage: {storage_path}")
+        except Exception as e:
+            logger.error(f"Error uploading file to Supabase: {str(e)}")
+            raise
         
         # Get the public URL
-        url = supabase_service.storage.from_(bucket_name).get_public_url(storage_path)
-        
-        logger.info(f"Saved file to Supabase storage: {storage_path}")
+        try:
+            url = supabase_service.storage.from_(bucket_name).get_public_url(storage_path)
+        except Exception as e:
+            logger.warning(f"Error getting public URL: {str(e)}")
+            url = f"/api/fallback/{storage_path}"
         
         # Return information about the saved file
-        return {
+        result = {
             "path": storage_path,
             "url": url,
             "size": len(file_content)
         }
+        
+        # Add temporary path if available
+        if temp_path:
+            result["temp_path"] = temp_path
+        
+        return result
     except Exception as e:
         logger.error(f"Error saving file to Supabase storage: {str(e)}")
         
-        # Create a temporary file as fallback
-        with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-            temp_file.write(file_content)
-            temp_path = temp_file.name
-        
-        logger.info(f"Saved file to temporary location: {temp_path}")
-        
-        # Return information about the saved file
-        return {
-            "path": storage_path,
-            "url": f"/api/fallback/{storage_path}",
-            "size": len(file_content),
-            "temp_path": temp_path
-        }
+        # Fall back to temporary file
+        if temp_path:
+            logger.info(f"Falling back to temporary location: {temp_path}")
+            
+            # Return information about the saved file
+            return {
+                "path": storage_path,
+                "url": f"/api/fallback/{storage_path}",
+                "size": len(file_content),
+                "temp_path": temp_path
+            }
+        else:
+            # If we couldn't create a temporary file, return minimal information
+            return {
+                "path": storage_path,
+                "url": f"/api/fallback/{storage_path}",
+                "size": len(file_content)
+            }
 
 def save_character_image(task_storage_path: str, character_id: str, image_content: bytes) -> Dict[str, Any]:
     """
@@ -486,7 +543,7 @@ def delete_directory(storage_path: str, bucket_name: str = VIDEOS_BUCKET) -> boo
         logger.error(f"Error deleting directory from Supabase storage: {str(e)}")
         return False
 
-def get_task_storage_path_from_id(task_id: str) -> Optional[str]:
+def get_task_storage_path_from_id(task_id: str) -> str:
     """
     Get the storage path for a task from its ID.
     
@@ -494,22 +551,26 @@ def get_task_storage_path_from_id(task_id: str) -> Optional[str]:
         task_id: ID of the task
         
     Returns:
-        Optional[str]: Storage path for the task, or None if it doesn't exist
+        str: Storage path for the task
     """
-    if not supabase_service.storage:
-        logger.warning("Supabase storage not initialized. Cannot get task storage path.")
-        return None
+    if not hasattr(supabase_service, 'storage') or not supabase_service.storage:
+        logger.warning("Supabase storage not initialized. Using default task storage path.")
+        return f"tasks/task_{task_id}"
     
     try:
         # List all directories in the tasks directory
-        response = supabase_service.storage.from_(VIDEOS_BUCKET).list("tasks")
+        try:
+            response = supabase_service.storage.from_(VIDEOS_BUCKET).list("tasks")
+            
+            # Find the directory that ends with the task ID
+            for item in response:
+                if item.get("id") is not None and item["name"].endswith(task_id):
+                    return f"tasks/{item['name']}"
+        except Exception as e:
+            logger.warning(f"Error listing tasks directory: {str(e)}")
         
-        # Find the directory that ends with the task ID
-        for item in response:
-            if item.get("id") is not None and item["name"].endswith(task_id):
-                return f"tasks/{item['name']}"
-        
-        return None
+        # If we couldn't find the task or there was an error, create a new path
+        return f"tasks/task_{task_id}"
     except Exception as e:
         logger.error(f"Error getting task storage path: {str(e)}")
-        return None
+        return f"tasks/task_{task_id}"
