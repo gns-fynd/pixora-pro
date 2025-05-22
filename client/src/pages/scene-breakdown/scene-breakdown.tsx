@@ -5,20 +5,10 @@ import { IconArrowRight, IconEdit, IconRefresh, IconChevronDown, IconChevronUp }
 import { SplitScreenLayout } from '@/components/layouts/SplitScreenLayout';
 import { useChat, ChatMessage } from '@/context/ChatContext';
 import { Loader } from '@/components/ui/loader';
-import { Scene, Prompt, ScriptResponse } from './types';
-import { validatePrompt, PromptValidation } from '@/utils/validation';
+import { PageTransition } from '@/components/ui/page-transition';
+import { Scene, Prompt } from './types';
 import { handleError as globalHandleError } from '@/utils/error-handler';
-
-// Define a type for the raw scene data
-interface RawSceneData {
-  id?: string;
-  description?: string;
-  visual?: string;
-  narration?: string;
-  audio?: string;
-  duration?: number;
-  image_url?: string;
-}
+import { convertToSceneBreakdownFormat, getPromptData } from '@/data/dummy-data';
 
 /**
  * SceneBreakdown component
@@ -36,20 +26,11 @@ export default function SceneBreakdown() {
   const [expandedSceneId, setExpandedSceneId] = useState<string | null>(null);
   const [isGeneratingVideo, setIsGeneratingVideo] = useState(false);
 
-  // Extract scenes and prompt from messages and localStorage
-  // Use the latest scene breakdown data from ChatContext
-  const { latestSceneData } = useChat();
-  // Fallback to parsing from messages if no latest data is available
+  // Use our dummy data instead of extracting from messages
   const { scenes, script } = useMemo(() => {
-    if (latestSceneData) {
-      return {
-        scenes: (latestSceneData.scenes as Scene[]) || [],
-        script: (latestSceneData.script as ScriptResponse) || null
-      };
-    }
-    return extractScenesFromMessages(messages);
-  }, [messages, latestSceneData]);
-  const prompt = useMemo(() => getPromptFromStorage(), []);
+    return convertToSceneBreakdownFormat();
+  }, []);
+  const prompt = useMemo(() => getPromptData(), []);
 
   // Set the first scene as expanded when scenes are loaded
   useEffect(() => {
@@ -127,58 +108,27 @@ export default function SceneBreakdown() {
     }
   }, [authInitialized, prompt, clearMessages, addMessage]);
 
-  // Function to fetch scene breakdown
+  // Mock function to fetch scene breakdown - just sets the state
   const fetchSceneBreakdown = async () => {
-    if (!prompt) {
-      setError('No prompt data found. Please return to the home page and try again.');
-      return;
-    }
-
-    // Validate the prompt
-    if (!validatePrompt(prompt as PromptValidation)) {
-      setError('Invalid prompt data. Please return to the home page and try again.');
-      return;
-    }
-
-    // Set request state
+    // Set request state to simulate loading
     setRequestState({
       attempted: true,
       inProgress: true,
       completed: false
     });
 
-    try {
-      console.log('Starting scene breakdown generation with prompt:', prompt.prompt);
-      
-      // Store prompt in localStorage
-      localStorage.setItem('pixora_prompt', JSON.stringify(prompt));
-      
-      // Send message to generate scene breakdown (silent mode)
-      await sendMessage(
-        'Generate scene breakdown for my video',
-        {
-          prompt: prompt.prompt,
-          style: prompt.style || 'cinematic',
-          duration: prompt.duration || 60,
-          aspect_ratio: prompt.aspectRatio || '16:9'
-        },
-        true // silent: do not add to chat history
-      );
-      
+    // Store prompt in localStorage
+    localStorage.setItem('pixora_prompt', JSON.stringify(prompt));
+    
+    // Simulate API delay
+    setTimeout(() => {
       // Update request state
       setRequestState({
         attempted: true,
         inProgress: false,
         completed: true
       });
-    } catch (err) {
-      handleComponentError(err);
-      setRequestState({
-        attempted: false,
-        inProgress: false,
-        completed: false
-      });
-    }
+    }, 1000);
   };
 
   // Toggle scene expansion
@@ -224,7 +174,10 @@ export default function SceneBreakdown() {
     alert(`This would open an editor for scene ${sceneId}`);
   };
 
-  // Generate video
+  // State for page transition
+  const [showTransition, setShowTransition] = useState(false);
+
+  // Generate video - simplified to just navigate to generation page
   const handleGenerateVideo = async () => {
     if (!prompt || !scenes || !Array.isArray(scenes) || scenes.length === 0) {
       setError('Missing required data');
@@ -244,32 +197,27 @@ export default function SceneBreakdown() {
       // Add message about the process
       addMessage(createVideoGenerationMessage());
 
-      // Execute the generate video action
-      await executeAction({
-        type: 'generate_video',
-        label: 'Generate Video',
-        prompt: prompt.prompt
-      }, {
-        prompt: prompt.prompt,
-        aspect_ratio: prompt.aspectRatio,
-        style: prompt.style,
-        scenes: Array.isArray(scenes) ? scenes.map(scene => ({
-          id: scene.id,
-          description: scene.visual,
-          narration: scene.audio,
-          duration: scene.duration
-        })) : []
-      });
+      // Store the scenes and prompt in localStorage for the generation page
+      localStorage.setItem('pixora_scenes', JSON.stringify({ scenes }));
+      localStorage.setItem('pixora_script', JSON.stringify(script));
+      localStorage.setItem('pixora_prompt', JSON.stringify(prompt));
+      
+      // Generate a random task ID
+      const taskId = crypto.randomUUID();
+      localStorage.setItem('pixora_task_id', taskId);
 
-      // Store the task ID in localStorage
-      localStorage.setItem('pixora_task_id', crypto.randomUUID());
-
-      // Navigate to the generation page
-      navigate('/generation');
+      // Show transition before navigating
+      setShowTransition(true);
     } catch (err) {
       handleComponentError(err);
       setIsGeneratingVideo(false);
     }
+  };
+
+  // Handle transition completion
+  const handleTransitionComplete = () => {
+    // Navigate to the generation page
+    navigate('/generation');
   };
 
   // Handle regenerate all scenes
@@ -431,8 +379,18 @@ export default function SceneBreakdown() {
 
   // Render main content
   return (
-    <SplitScreenLayout videoId="scene-breakdown">
-      <div className="p-6">
+    <React.Fragment>
+      {/* Page transition overlay */}
+      {showTransition && (
+        <PageTransition 
+          duration={5000} 
+          message="Preparing your video generation..." 
+          onComplete={handleTransitionComplete}
+        />
+      )}
+      
+      <SplitScreenLayout videoId="scene-breakdown">
+        <div className="p-6">
         {/* Error message */}
         {error && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-2xl p-4 mb-6 text-red-500">
@@ -520,7 +478,8 @@ export default function SceneBreakdown() {
         )}
       </div>
     </SplitScreenLayout>
-  );
+  </React.Fragment>
+);
 }
 
 // ===== INLINED COMPONENTS =====
@@ -644,6 +603,22 @@ function SceneItem({
               <div className="bg-white/5 rounded-lg p-4 mb-4">
                 <p className="text-sm text-muted-foreground">{scene.audio}</p>
               </div>
+              
+              {/* Character information if available */}
+              {scene.character && (
+                <div className="mt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="h-5 w-5 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                      <span className="text-yellow-500 text-xs">C</span>
+                    </div>
+                    <h3 className="text-sm font-medium">Character</h3>
+                  </div>
+                  <div className="bg-white/5 rounded-lg p-4 mb-4">
+                    <p className="text-sm font-medium">{scene.character.name}</p>
+                    <p className="text-xs text-muted-foreground mt-1">{scene.character.description}</p>
+                  </div>
+                </div>
+              )}
 
               <div className="flex items-center gap-2 mb-3 mt-6">
                 <div className="h-5 w-5 rounded-full bg-green-500/20 flex items-center justify-center">
@@ -690,139 +665,6 @@ function SceneItem({
 
 // ===== INLINED UTILITY FUNCTIONS =====
 
-/**
- * Extract scene data from chat messages
- */
-function extractScenesFromMessages(messages: ChatMessage[]): {
-  scenes: Scene[];
-  script: ScriptResponse | null;
-} {
-  console.log('Extracting scenes from messages:', messages.length);
-
-  // Helper function to format scenes
-  function formatScenes(scenes: RawSceneData[]): Scene[] {
-    return scenes.map((scene: RawSceneData) => ({
-      id: scene.id || crypto.randomUUID(),
-      visual: scene.description || scene.visual || '',
-      audio: scene.narration || scene.audio || '',
-      duration: scene.duration || 5,
-      narration: scene.narration || scene.audio || '',
-      image_url: scene.image_url || undefined
-    }));
-  }
-
-  // Default return value
-  const result = {
-    scenes: [] as Scene[],
-    script: null as ScriptResponse | null
-  };
-
-  // Look for messages with scene breakdown data
-  for (const message of messages) {
-    // Skip non-assistant messages
-    if (message.role !== 'assistant') continue;
-
-    console.log('Checking assistant message:', message.content.substring(0, 100) + '...');
-
-    // Try to extract scene data from the message
-    try {
-      // Method 1: Try to parse the entire message as JSON
-      try {
-        const data = JSON.parse(message.content);
-        console.log('Parsed entire message as JSON');
-
-        // Check if this is scene breakdown data
-        if (data.scenes && Array.isArray(data.scenes)) {
-          console.log('Found scenes in direct JSON parse');
-          result.scenes = formatScenes(data.scenes);
-          if (data.script) result.script = data.script;
-          break;
-        }
-      } catch {
-        // Not a direct JSON message, continue with other methods
-        console.log('Message is not a valid JSON, trying other methods');
-      }
-
-      // Method 2: Look for JSON in code blocks
-      const jsonMatch = message.content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
-      if (jsonMatch && jsonMatch[1]) {
-        try {
-          console.log('Found potential JSON in code block:', jsonMatch[1]);
-
-          // Try to clean up the JSON string (remove escaped quotes, etc.)
-          let jsonStr = jsonMatch[1];
-          // If the string has escaped quotes, unescape them
-          if (jsonStr.includes('\\"')) {
-            jsonStr = jsonStr.replace(/\\"/g, '"');
-          }
-
-          console.log('Cleaned JSON string:', jsonStr);
-
-          const data = JSON.parse(jsonStr);
-          console.log('Successfully parsed JSON in code block:', data);
-
-          // Check if this is scene breakdown data
-          if (data.scenes && Array.isArray(data.scenes)) {
-            console.log('Found scenes in code block JSON:', data.scenes.length);
-            result.scenes = formatScenes(data.scenes);
-            if (data.script) result.script = data.script;
-
-            // Store in localStorage for persistence
-            localStorage.setItem('pixora_scenes', JSON.stringify({ scenes: result.scenes }));
-            if (data.script) localStorage.setItem('pixora_script', JSON.stringify(data.script));
-
-            break;
-          }
-        } catch (error) {
-          console.log('Error parsing JSON in code block:', error);
-          console.error('JSON parse error details:', error);
-        }
-      }
-    } catch (error) {
-      console.error('Error extracting scene data from message:', error);
-      // Continue to the next message
-    }
-  }
-
-  // If no scenes were found in messages, check localStorage
-  if (result.scenes.length === 0) {
-    try {
-      // Check localStorage for scene data
-      const storedScenes = localStorage.getItem('pixora_scenes');
-      if (storedScenes) {
-        const data = JSON.parse(storedScenes);
-        if (data.scenes && Array.isArray(data.scenes)) {
-          result.scenes = data.scenes;
-        }
-      }
-
-      // Check localStorage for script data
-      const storedScript = localStorage.getItem('pixora_script');
-      if (storedScript) {
-        result.script = JSON.parse(storedScript);
-      }
-    } catch (error) {
-      console.error('Error loading scene data from localStorage:', error);
-    }
-  }
-
-  return result;
-}
-
-/**
- * Extract prompt data from localStorage
- */
-function getPromptFromStorage(): Prompt | null {
-  try {
-    const storedPrompt = localStorage.getItem('pixora_prompt');
-    if (storedPrompt) {
-      return JSON.parse(storedPrompt);
-    }
-  } catch (error) {
-    console.error('Error loading prompt data from localStorage:', error);
-  }
-  return null;
-}
 
 /**
  * Create a loading message for the scene breakdown process

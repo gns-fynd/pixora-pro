@@ -36,19 +36,35 @@ export interface SceneBreakdownResponse {
 export interface UnifiedGenerationResponse {
   response_type: string;
   message: string;
-  data: any;
+  data: Record<string, unknown>;
   task_id?: string;
-  ui_action?: any;
+  ui_action?: Record<string, unknown>;
+}
+
+// Define a Character interface
+export interface Character {
+  name: string;
+  description: string;
+  image_url?: string;
 }
 
 // Define the Scene interface for the component state
 export interface Scene {
   id: string;
+  title?: string;
   visual: string;
   audio: string;
   duration: number;
   narration?: string;
   image_url?: string;
+  character?: Character;
+}
+
+// Define the Script interface for the component state
+export interface Script {
+  id: string;
+  title: string;
+  content: string;
 }
 
 // Define the Prompt interface for the component state

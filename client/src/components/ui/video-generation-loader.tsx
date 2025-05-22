@@ -22,63 +22,61 @@ export function VideoGenerationLoader({
   if (!isVisible) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-background rounded-xl p-6 max-w-md w-full relative">
-        <button 
-          className="absolute top-2 right-2 text-muted-foreground hover:text-foreground transition-colors"
-          onClick={() => {
-            // Create a custom event to notify the parent component
-            const event = new CustomEvent('closeLoader');
-            window.dispatchEvent(event);
-          }}
-        >
-          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18"></line>
-            <line x1="6" y1="6" x2="18" y2="18"></line>
-          </svg>
-        </button>
-        <h3 className="text-xl font-semibold mb-4">{message}</h3>
-        
-        {/* Loader animation */}
-        <div className="loader-container relative w-full h-20 mb-4">
-          <div className="loader"></div>
+    <div className="glass-morphism rounded-xl p-6 max-w-md w-full relative">
+      <button 
+        className="absolute top-2 right-2 text-muted-foreground hover:text-foreground transition-colors"
+        onClick={() => {
+          // Create a custom event to notify the parent component
+          const event = new CustomEvent('closeLoader');
+          window.dispatchEvent(event);
+        }}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+      <h3 className="text-xl font-semibold mb-4">{message}</h3>
+      
+      {/* Loader animation */}
+      <div className="loader-container relative w-full h-20 mb-4">
+        <div className="loader"></div>
+      </div>
+      
+      {/* Overall progress */}
+      <div className="mb-6">
+        <div className="flex justify-between text-sm mb-1">
+          <span>Overall Progress</span>
+          <span>{overallProgress}%</span>
         </div>
-        
-        {/* Overall progress */}
-        <div className="mb-6">
-          <div className="flex justify-between text-sm mb-1">
-            <span>Overall Progress</span>
-            <span>{overallProgress}%</span>
-          </div>
-          <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
-            <div 
-              className="h-full bg-primary rounded-full transition-all duration-300 ease-out"
-              style={{ width: `${overallProgress}%` }}
-            />
-          </div>
+        <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+          <div 
+            className="h-full bg-primary rounded-full transition-all duration-300 ease-out"
+            style={{ width: `${overallProgress}%` }}
+          />
         </div>
-        
-        {/* Step-by-step progress */}
-        <div className="space-y-4">
-          {steps.map(step => (
-            <div key={step.id} className="space-y-1">
-              <div className="flex justify-between text-sm">
-                <span>{step.label}</span>
-                <span>{step.progress}%</span>
-              </div>
-              <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-                <div 
-                  className={`h-full rounded-full transition-all duration-300 ease-out ${
-                    step.status === 'completed' ? 'bg-green-500' :
-                    step.status === 'processing' ? 'bg-primary' :
-                    step.status === 'error' ? 'bg-red-500' : 'bg-muted-foreground/30'
-                  }`}
-                  style={{ width: `${step.progress}%` }}
-                />
-              </div>
+      </div>
+      
+      {/* Step-by-step progress */}
+      <div className="space-y-4">
+        {steps.map(step => (
+          <div key={step.id} className="space-y-1">
+            <div className="flex justify-between text-sm">
+              <span>{step.label}</span>
+              <span>{step.progress}%</span>
             </div>
-          ))}
-        </div>
+            <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
+              <div 
+                className={`h-full rounded-full transition-all duration-300 ease-out ${
+                  step.status === 'completed' ? 'bg-green-500' :
+                  step.status === 'processing' ? 'bg-primary' :
+                  step.status === 'error' ? 'bg-red-500' : 'bg-muted-foreground/30'
+                }`}
+                style={{ width: `${step.progress}%` }}
+              />
+            </div>
+          </div>
+        ))}
       </div>
       
       <style>{`

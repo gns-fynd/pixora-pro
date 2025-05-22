@@ -5,9 +5,16 @@ import { IconDownload, IconEdit } from '@tabler/icons-react';
 import { SplitScreenLayout } from '@/components/layouts/SplitScreenLayout';
 import { useChat } from '@/context/ChatContext';
 import { Loader } from '@/components/ui/loader';
-import { createAgentService } from '@/services/agent-service';
-
-// No need for explicit interface definition as we're using the return type from agentService.getTaskStatus
+import { VideoGenerationLoader } from '@/components/ui/video-generation-loader';
+// Import the VideoGenerationStep interface
+interface VideoGenerationStep {
+  id: string;
+  label: string;
+  icon: 'video' | 'audio' | 'music' | 'transcript';
+  status: 'pending' | 'processing' | 'completed' | 'error';
+  progress: number;
+}
+import { mumbaiDocumentaryData } from '@/data/dummy-data';
 
 // Define prompt type
 interface VideoPrompt {
@@ -42,6 +49,15 @@ export default function Generation() {
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [prompt, setPrompt] = useState<VideoPrompt | null>(null);
   const [isLoaderMinimized, setIsLoaderMinimized] = useState(false);
+  
+  // State for video generation loader
+  const [showVideoLoader, setShowVideoLoader] = useState(true);
+  const [videoGenerationSteps, setVideoGenerationSteps] = useState<VideoGenerationStep[]>([
+    { id: 'video', label: 'Generating video', icon: 'video', status: 'processing', progress: 0 },
+    { id: 'audio', label: 'Creating audio', icon: 'audio', status: 'pending', progress: 0 },
+    { id: 'music', label: 'Adding music', icon: 'music', status: 'pending', progress: 0 },
+    { id: 'transcript', label: 'Finalizing', icon: 'transcript', status: 'pending', progress: 0 }
+  ]);
   
   // Handle the minimizeLoader event
   useEffect(() => {
@@ -94,186 +110,93 @@ export default function Generation() {
     }
   }, [location, addMessage]);
   
-  // Track if polling is active
-  const [isPolling, setIsPolling] = useState(false);
-  
-  // Poll for generation status
+  // Simulate video generation with a 10-second timer
   useEffect(() => {
-    // If no task ID or already complete, don't poll
-    if (!taskId || isComplete || isPolling) return;
+    if (!taskId) return;
     
-    // Set polling flag to prevent multiple polling loops
-    setIsPolling(true);
-    
-    // Store task ID in localStorage
-    localStorage.setItem('pixora_task_id', taskId);
-    
-    // Create an AbortController to cancel requests if component unmounts
-    const controller = new AbortController();
-    
-    // Check if we have cached status data
-    const cachedStatusKey = `pixora_status_${taskId}`;
-    const cachedStatus = localStorage.getItem(cachedStatusKey);
-    const cachedStatusExpiry = localStorage.getItem(`${cachedStatusKey}_expiry`);
-    
-    // If we have valid cached status and it's complete, use it
-    if (cachedStatus && cachedStatusExpiry) {
-      try {
-        const statusData = JSON.parse(cachedStatus);
-        const expiryTime = parseInt(cachedStatusExpiry, 10);
+    // Update progress every second
+    const interval = setInterval(() => {
+      setVideoGenerationSteps(prev => {
+        const newSteps = [...prev];
         
-        // If the cached status is still valid and shows completion
-        if (expiryTime > Date.now() && statusData.status === 'completed') {
-          console.debug('Using cached completed status');
+        // Update progress for the current step
+        if (currentStep < newSteps.length) {
+          const step = newSteps[currentStep];
+          const newProgress = Math.min(100, step.progress + 25); // Increase by 25% each second
           
-          // Update state with cached data
-          setOverallProgress(100);
-          setIsComplete(true);
+          newSteps[currentStep] = {
+            ...step,
+            progress: newProgress
+          };
           
-          if (statusData.result?.video_url) {
-            setVideoUrl(statusData.result.video_url);
+          // If this step is complete, move to the next step
+          if (newProgress >= 100) {
+            // Create a new step with completed status
+            newSteps[currentStep] = {
+              ...newSteps[currentStep],
+              status: 'completed' as const
+            };
+            
+            // Move to next step if available
+            if (currentStep < newSteps.length - 1) {
+              // Create a new step with processing status
+              newSteps[currentStep + 1] = {
+                ...newSteps[currentStep + 1],
+                status: 'processing' as const
+              };
+              setCurrentStep(currentStep + 1);
+            }
           }
-          
-          if (statusData.result?.thumbnail_url) {
-            setThumbnailUrl(statusData.result.thumbnail_url);
-          }
-          
-          // Add AI message about completion
-          addMessage({
-            role: 'assistant',
-            content: 'Your video has been generated successfully! You can now view it, download it, or edit it in the timeline.',
-            timestamp: new Date()
-          });
-          
-          // Reset polling flag
-          setIsPolling(false);
-          return;
-        }
-      } catch (err) {
-        console.error('Error parsing cached status:', err);
-        // Continue with API polling if parsing fails
-      }
-    }
-    
-    // Define the status check function using WebSocket
-    const checkStatus = async () => {
-      try {
-        // Create agent service if not already created
-        const agentService = await createAgentService();
-        
-        // Get generation status via WebSocket
-        const status = await agentService.getTaskStatus(taskId);
-        
-        // Update overall progress
-        setOverallProgress(status.progress);
-        
-        // Update step progress based on progress percentage
-        // Map progress to steps (0-20% = step 0, 20-40% = step 1, etc.)
-        const stepIndex = Math.min(Math.floor(status.progress / 20), 5);
-        
-        if (stepIndex !== currentStep) {
-          // If we've moved to a new step, add an AI message
-          const stepMessages = [
-            'I\'m analyzing your prompt to understand exactly what you want in your video.',
-            'Now I\'m breaking down your video into individual scenes.',
-            'I\'m creating high-quality visuals for each scene in your video.',
-            'I\'m generating the voiceover narration for your video.',
-            'I\'m composing a custom background soundtrack that matches the mood of your video.',
-            'I\'m putting everything together into your final video.'
-          ];
-          
-          addMessage({
-            role: 'assistant',
-            content: stepMessages[stepIndex],
-            timestamp: new Date()
-          });
-          
-          setCurrentStep(stepIndex);
         }
         
-        // Update progress for all steps
-        setProgress(prev => {
-          const newProgress = [...prev];
-          
-          // Set previous steps to 100%
-          for (let i = 0; i < stepIndex; i++) {
-            newProgress[i].percentage = 100;
-          }
-          
-          // Set current step progress
-          const stepProgress = Math.min(100, Math.max(0, (status.progress % 20) * 5));
+        return newSteps;
+      });
+      
+      // Update overall progress
+      setOverallProgress(prev => Math.min(100, prev + 10)); // 10% per second = 100% in 10 seconds
+      
+      // Also update the progress steps to show progress in the UI
+      setProgress(prev => {
+        const newProgress = [...prev];
+        const stepIndex = Math.min(Math.floor(overallProgress / 20), 5);
+        
+        // Set previous steps to 100%
+        for (let i = 0; i < stepIndex; i++) {
+          newProgress[i].percentage = 100;
+        }
+        
+        // Set current step progress
+        const stepProgress = Math.min(100, Math.max(0, (overallProgress % 20) * 5));
+        if (stepIndex < newProgress.length) {
           newProgress[stepIndex].percentage = stepProgress;
-          
-          // Set next steps to 0%
-          for (let i = stepIndex + 1; i < newProgress.length; i++) {
-            newProgress[i].percentage = 0;
-          }
-          
-          return newProgress;
-        });
-        
-        // Check if generation is complete
-        if (status.status === 'completed') {
-          setIsComplete(true);
-          
-          // Set video URL if available
-          if (status.video_url) {
-            setVideoUrl(status.video_url);
-          }
-          
-          // Cache the completed status (valid for 24 hours)
-          const cachedStatusKey = `pixora_status_${taskId}`;
-          localStorage.setItem(cachedStatusKey, JSON.stringify(status));
-          const expiryTime = Date.now() + (24 * 60 * 60 * 1000); // 24 hours
-          localStorage.setItem(`${cachedStatusKey}_expiry`, expiryTime.toString());
-          
-          // Add AI message about completion
-          addMessage({
-            role: 'assistant',
-            content: 'Your video has been generated successfully! You can now view it, download it, or edit it in the timeline.',
-            timestamp: new Date()
-          });
-          
-          // Clear interval
-          clearInterval(intervalId);
-          setIsPolling(false); // Reset polling flag on completion
-        } else if (status.status === 'error' || status.status === 'failed') {
-          setError(status.message || 'Video generation failed');
-          
-          // Add AI message about the error
-          addMessage({
-            role: 'assistant',
-            content: `I encountered an error while generating your video: ${status.message || 'Unknown error'}. Would you like to try again?`,
-            timestamp: new Date()
-          });
-          
-          clearInterval(intervalId);
         }
-      } catch (err) {
-        console.error('Error checking generation status:', err);
-        setError('Failed to check generation status');
         
-        // Add AI message about the error
-        addMessage({
-          role: 'assistant',
-          content: 'I\'m having trouble checking the status of your video generation. Please try refreshing the page.',
-          timestamp: new Date()
-        });
-        
-        clearInterval(intervalId);
+        return newProgress;
+      });
+    }, 1000);
+    
+    // After 10 seconds, hide the loader and show the completed video
+    const timer = setTimeout(() => {
+      setShowVideoLoader(false);
+      setIsComplete(true);
+      setVideoUrl(mumbaiDocumentaryData.final_video.path);
+      
+      // Set a thumbnail from the first scene
+      if (mumbaiDocumentaryData.scenes && mumbaiDocumentaryData.scenes.length > 0) {
+        setThumbnailUrl(mumbaiDocumentaryData.scenes[0].image_url);
       }
-    };
-    
-    // Check status immediately
-    checkStatus();
-    
-    // Then check every 5 seconds (WebSocket is more efficient, so we can poll less frequently)
-    const intervalId = setInterval(checkStatus, 5000);
+      
+      // Add AI message about completion
+      addMessage({
+        role: 'assistant',
+        content: 'Your video has been generated successfully! You can now view it, download it, or edit it in the timeline.',
+        timestamp: new Date()
+      });
+    }, 10000);
     
     return () => {
-      clearInterval(intervalId);
-      controller.abort(); // Abort any pending requests
-      setIsPolling(false); // Reset polling flag when component unmounts
+      clearInterval(interval);
+      clearTimeout(timer);
     };
   }, [taskId, currentStep, addMessage]);
   
@@ -291,12 +214,13 @@ export default function Generation() {
       timestamp: new Date()
     });
     
-    // Navigate to the editor with the video
-    if (videoUrl) {
-      navigate('/editor', { state: { videoUrl } });
-    } else {
-      navigate('/editor');
-    }
+    // Navigate to the editor with the video and scenes data
+    navigate('/editor', { 
+      state: { 
+        videoUrl,
+        scenes: mumbaiDocumentaryData.scenes
+      } 
+    });
   };
   
   const handleDownload = () => {
@@ -320,6 +244,22 @@ export default function Generation() {
       alert('Video URL not available');
     }
   };
+  
+  // Show the video generation loader for 10 seconds
+  if (showVideoLoader) {
+    return (
+      <SplitScreenLayout videoId="generation">
+        <div className="p-6">
+          <VideoGenerationLoader
+            isVisible={true}
+            overallProgress={overallProgress}
+            steps={videoGenerationSteps}
+            message="Generating your Ganesh Chaturthi video..."
+          />
+        </div>
+      </SplitScreenLayout>
+    );
+  }
   
   return (
     <SplitScreenLayout videoId="generation">
@@ -456,7 +396,7 @@ export default function Generation() {
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
                 <div className="bg-white/5 rounded-lg p-4">
                   <div className="text-sm text-muted-foreground mb-1">Duration</div>
-                  <div className="font-medium">{prompt?.duration || "30"} seconds</div>
+                  <div className="font-medium">{prompt?.duration || "60"} seconds</div>
                 </div>
                 <div className="bg-white/5 rounded-lg p-4">
                   <div className="text-sm text-muted-foreground mb-1">Resolution</div>
@@ -464,7 +404,7 @@ export default function Generation() {
                 </div>
                 <div className="bg-white/5 rounded-lg p-4">
                   <div className="text-sm text-muted-foreground mb-1">Style</div>
-                  <div className="font-medium capitalize">{prompt?.style || "Standard"}</div>
+                  <div className="font-medium capitalize">{prompt?.style || "Documentary"}</div>
                 </div>
               </div>
               
