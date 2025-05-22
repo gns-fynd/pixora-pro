@@ -31,7 +31,7 @@ interface ChatContextType {
   activeGeneration: GenerationProgress | null;
   authInitialized: boolean;
   authError: string | null;
-  latestSceneData: any | null; // Add latest scene data to context
+  latestSceneData: Record<string, unknown> | null; // Add latest scene data to context
 }
 
 const ChatContext = createContext<ChatContextType | undefined>(undefined);
@@ -148,9 +148,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
               agentServiceRef.current = service;
               
               // Register handlers
-              service.registerHandler('message', handleAgentMessage);
-              service.registerHandler('progress', handleProgressUpdate);
-              service.registerHandler('video', handleVideoComplete);
+              service.registerHandler('agent_message', handleAgentMessage);
+              service.registerHandler('progress_update', handleProgressUpdate);
+              service.registerHandler('video_complete', handleVideoComplete);
               service.registerHandler('error', handleError);
               
               setAuthInitialized(true);
@@ -173,9 +173,9 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
         } else if (!state.isAuthenticated && agentServiceRef.current) {
           // Just unregister handlers if logged out, don't disconnect
           const service = agentServiceRef.current;
-          service.unregisterHandler('message', handleAgentMessage);
-          service.unregisterHandler('progress', handleProgressUpdate);
-          service.unregisterHandler('video', handleVideoComplete);
+          service.unregisterHandler('agent_message', handleAgentMessage);
+          service.unregisterHandler('progress_update', handleProgressUpdate);
+          service.unregisterHandler('video_complete', handleVideoComplete);
           service.unregisterHandler('error', handleError);
           
           agentServiceRef.current = null;
@@ -233,10 +233,10 @@ export const ChatProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   // Handle agent message from WebSocket
   // Store the latest scene breakdown data for use in the scene breakdown UI
-  const latestSceneDataRef = useRef<any>(null);
-  const [latestSceneData, setLatestSceneData] = useState<any | null>(null);
+  const latestSceneDataRef = useRef<Record<string, unknown> | null>(null);
+  const [latestSceneData, setLatestSceneData] = useState<Record<string, unknown> | null>(null);
 
-  const handleAgentMessage = (data: AgentMessageData & { data?: any }) => {
+  const handleAgentMessage = (data: AgentMessageData & { data?: Record<string, unknown> }) => {
     if (data.data) {
       // Store the scene breakdown data for use in the scene breakdown UI
       latestSceneDataRef.current = data.data;

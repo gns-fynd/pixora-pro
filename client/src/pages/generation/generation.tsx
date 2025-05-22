@@ -2,26 +2,12 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '@/components/button';
 import { IconDownload, IconEdit } from '@tabler/icons-react';
-import { apiClient } from '@/services/api-client';
 import { SplitScreenLayout } from '@/components/layouts/SplitScreenLayout';
 import { useChat } from '@/context/ChatContext';
 import { Loader } from '@/components/ui/loader';
+import { createAgentService } from '@/services/agent-service';
 
-// Define types for API responses
-interface VideoStatusResponse {
-  task_id: string;
-  status: 'pending' | 'processing' | 'completed' | 'failed';
-  progress: number;
-  message: string;
-  current_step?: 'analyzing_prompt' | 'generating_images' | 'generating_audio' | 'generating_music' | 'assembling_video';
-  step_progress?: number;
-  error?: string;
-  result?: {
-    video_url?: string;
-    thumbnail_url?: string;
-    [key: string]: unknown;
-  };
-}
+// No need for explicit interface definition as we're using the return type from agentService.getTaskStatus
 
 // Define prompt type
 interface VideoPrompt {
@@ -55,6 +41,20 @@ export default function Generation() {
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
   const [prompt, setPrompt] = useState<VideoPrompt | null>(null);
+  const [isLoaderMinimized, setIsLoaderMinimized] = useState(false);
+  
+  // Handle the minimizeLoader event
+  useEffect(() => {
+    const handleMinimizeLoader = () => {
+      setIsLoaderMinimized(true);
+    };
+    
+    window.addEventListener('minimizeLoader', handleMinimizeLoader);
+    
+    return () => {
+      window.removeEventListener('minimizeLoader', handleMinimizeLoader);
+    };
+  }, []);
   
   // Get task ID and prompt data from URL or localStorage
   useEffect(() => {
@@ -155,76 +155,70 @@ export default function Generation() {
       }
     }
     
-    // Define the status check function
+    // Define the status check function using WebSocket
     const checkStatus = async () => {
       try {
-        // Get generation status
-        const status = await apiClient.get<VideoStatusResponse>(`/scenes/video/${taskId}`, {
-          signal: controller.signal
-        });
+        // Create agent service if not already created
+        const agentService = await createAgentService();
+        
+        // Get generation status via WebSocket
+        const status = await agentService.getTaskStatus(taskId);
         
         // Update overall progress
         setOverallProgress(status.progress);
         
-        // Update step progress
-        if (status.current_step) {
-          const stepIndex = GENERATION_STEPS.findIndex(step => step.id === status.current_step);
+        // Update step progress based on progress percentage
+        // Map progress to steps (0-20% = step 0, 20-40% = step 1, etc.)
+        const stepIndex = Math.min(Math.floor(status.progress / 20), 5);
+        
+        if (stepIndex !== currentStep) {
+          // If we've moved to a new step, add an AI message
+          const stepMessages = [
+            'I\'m analyzing your prompt to understand exactly what you want in your video.',
+            'Now I\'m breaking down your video into individual scenes.',
+            'I\'m creating high-quality visuals for each scene in your video.',
+            'I\'m generating the voiceover narration for your video.',
+            'I\'m composing a custom background soundtrack that matches the mood of your video.',
+            'I\'m putting everything together into your final video.'
+          ];
           
-          if (stepIndex !== -1) {
-            // If we've moved to a new step, add an AI message
-            if (stepIndex > currentStep) {
-              const stepMessages = [
-                'I\'m analyzing your prompt to understand exactly what you want in your video.',
-                'Now I\'m breaking down your video into individual scenes.',
-                'I\'m creating high-quality visuals for each scene in your video.',
-                'I\'m generating the voiceover narration for your video.',
-                'I\'m composing a custom background soundtrack that matches the mood of your video.',
-                'I\'m putting everything together into your final video.'
-              ];
-              
-              addMessage({
-                role: 'assistant',
-                content: stepMessages[stepIndex],
-                timestamp: new Date()
-              });
-            }
-            
-            setCurrentStep(stepIndex);
-            
-            // Update progress for all steps
-            setProgress(prev => {
-              const newProgress = [...prev];
-              
-              // Set previous steps to 100%
-              for (let i = 0; i < stepIndex; i++) {
-                newProgress[i].percentage = 100;
-              }
-              
-              // Set current step progress
-              newProgress[stepIndex].percentage = status.step_progress || 0;
-              
-              // Set next steps to 0%
-              for (let i = stepIndex + 1; i < newProgress.length; i++) {
-                newProgress[i].percentage = 0;
-              }
-              
-              return newProgress;
-            });
-          }
+          addMessage({
+            role: 'assistant',
+            content: stepMessages[stepIndex],
+            timestamp: new Date()
+          });
+          
+          setCurrentStep(stepIndex);
         }
+        
+        // Update progress for all steps
+        setProgress(prev => {
+          const newProgress = [...prev];
+          
+          // Set previous steps to 100%
+          for (let i = 0; i < stepIndex; i++) {
+            newProgress[i].percentage = 100;
+          }
+          
+          // Set current step progress
+          const stepProgress = Math.min(100, Math.max(0, (status.progress % 20) * 5));
+          newProgress[stepIndex].percentage = stepProgress;
+          
+          // Set next steps to 0%
+          for (let i = stepIndex + 1; i < newProgress.length; i++) {
+            newProgress[i].percentage = 0;
+          }
+          
+          return newProgress;
+        });
         
         // Check if generation is complete
         if (status.status === 'completed') {
           setIsComplete(true);
           
           // Set video URL if available
-          if (status.result?.video_url) {
-            setVideoUrl(status.result.video_url);
-          }
-          
-          // Set thumbnail URL if available
-          if (status.result?.thumbnail_url) {
-            setThumbnailUrl(status.result.thumbnail_url);
+          if (status.video_url) {
+            setVideoUrl(status.video_url);
           }
           
           // Cache the completed status (valid for 24 hours)
@@ -243,13 +237,13 @@ export default function Generation() {
           // Clear interval
           clearInterval(intervalId);
           setIsPolling(false); // Reset polling flag on completion
-        } else if (status.status === 'failed') {
-          setError(status.error || 'Video generation failed');
+        } else if (status.status === 'error' || status.status === 'failed') {
+          setError(status.message || 'Video generation failed');
           
           // Add AI message about the error
           addMessage({
             role: 'assistant',
-            content: `I encountered an error while generating your video: ${status.error || 'Unknown error'}. Would you like to try again?`,
+            content: `I encountered an error while generating your video: ${status.message || 'Unknown error'}. Would you like to try again?`,
             timestamp: new Date()
           });
           
@@ -273,8 +267,8 @@ export default function Generation() {
     // Check status immediately
     checkStatus();
     
-    // Then check every 2 seconds
-    const intervalId = setInterval(checkStatus, 2000);
+    // Then check every 5 seconds (WebSocket is more efficient, so we can poll less frequently)
+    const intervalId = setInterval(checkStatus, 5000);
     
     return () => {
       clearInterval(intervalId);
@@ -344,10 +338,22 @@ export default function Generation() {
           
           {/* Overall progress with Loader */}
           <div className="mb-8 flex flex-col items-center">
-            <Loader 
-              progress={overallProgress} 
-              message={!isComplete ? `Estimated time remaining: ~${Math.max(5 - Math.floor(overallProgress / 20), 0)} minutes` : undefined}
-            />
+            {isLoaderMinimized ? (
+              <div className="flex items-center gap-2 cursor-pointer" onClick={() => setIsLoaderMinimized(false)}>
+                <div className="h-2 w-32 bg-white/15 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-primary rounded-full transition-all duration-500 ease-out"
+                    style={{ width: `${overallProgress}%` }}
+                  />
+                </div>
+                <span className="text-sm text-muted-foreground">{overallProgress}%</span>
+              </div>
+            ) : (
+              <Loader 
+                progress={overallProgress} 
+                message={!isComplete ? `Estimated time remaining: ~${Math.max(5 - Math.floor(overallProgress / 20), 0)} minutes` : undefined}
+              />
+            )}
           </div>
           
           {/* Step-by-step progress */}

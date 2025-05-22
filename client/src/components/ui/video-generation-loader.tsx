@@ -23,7 +23,20 @@ export function VideoGenerationLoader({
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="bg-background rounded-xl p-6 max-w-md w-full">
+      <div className="bg-background rounded-xl p-6 max-w-md w-full relative">
+        <button 
+          className="absolute top-2 right-2 text-muted-foreground hover:text-foreground transition-colors"
+          onClick={() => {
+            // Create a custom event to notify the parent component
+            const event = new CustomEvent('closeLoader');
+            window.dispatchEvent(event);
+          }}
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
         <h3 className="text-xl font-semibold mb-4">{message}</h3>
         
         {/* Loader animation */}

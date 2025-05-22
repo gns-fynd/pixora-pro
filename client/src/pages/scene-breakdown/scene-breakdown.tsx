@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/button';
 import { IconArrowRight, IconEdit, IconRefresh, IconChevronDown, IconChevronUp } from '@tabler/icons-react';
@@ -43,8 +43,8 @@ export default function SceneBreakdown() {
   const { scenes, script } = useMemo(() => {
     if (latestSceneData) {
       return {
-        scenes: latestSceneData.scenes || [],
-        script: latestSceneData.script || null
+        scenes: (latestSceneData.scenes as Scene[]) || [],
+        script: (latestSceneData.script as ScriptResponse) || null
       };
     }
     return extractScenesFromMessages(messages);
@@ -53,7 +53,7 @@ export default function SceneBreakdown() {
 
   // Set the first scene as expanded when scenes are loaded
   useEffect(() => {
-    if (scenes.length > 0 && !expandedSceneId) {
+    if (scenes && Array.isArray(scenes) && scenes.length > 0 && !expandedSceneId) {
       setExpandedSceneId(scenes[0].id);
     }
   }, [scenes, expandedSceneId]);
@@ -122,7 +122,7 @@ export default function SceneBreakdown() {
     });
     
     // Start scene breakdown generation if we don't already have scenes
-    if (scenes.length === 0 && !requestState.inProgress && !isProcessing) {
+    if (!scenes || !Array.isArray(scenes) || scenes.length === 0 && !requestState.inProgress && !isProcessing) {
       fetchSceneBreakdown();
     }
   }, [authInitialized, prompt, clearMessages, addMessage]);
@@ -195,7 +195,7 @@ export default function SceneBreakdown() {
 
     try {
       // Find the scene index
-      const sceneIndex = scenes.findIndex((s: Scene) => s.id === sceneId);
+      const sceneIndex = Array.isArray(scenes) ? scenes.findIndex((s: Scene) => s.id === sceneId) : -1;
       if (sceneIndex === -1) {
         setError('Scene not found');
         return;
@@ -226,7 +226,7 @@ export default function SceneBreakdown() {
 
   // Generate video
   const handleGenerateVideo = async () => {
-    if (!prompt || scenes.length === 0) {
+    if (!prompt || !scenes || !Array.isArray(scenes) || scenes.length === 0) {
       setError('Missing required data');
       return;
     }
@@ -253,12 +253,12 @@ export default function SceneBreakdown() {
         prompt: prompt.prompt,
         aspect_ratio: prompt.aspectRatio,
         style: prompt.style,
-        scenes: scenes.map(scene => ({
+        scenes: Array.isArray(scenes) ? scenes.map(scene => ({
           id: scene.id,
           description: scene.visual,
           narration: scene.audio,
           duration: scene.duration
-        }))
+        })) : []
       });
 
       // Store the task ID in localStorage
@@ -378,7 +378,7 @@ export default function SceneBreakdown() {
   }
 
   // Show loading view if processing and no scenes
-  if (isProcessing && scenes.length === 0) {
+  if (isProcessing && (!scenes || !Array.isArray(scenes) || scenes.length === 0)) {
     return (
       <SplitScreenLayout videoId="scene-breakdown">
         <div className="flex items-center justify-center h-full">
@@ -395,7 +395,7 @@ export default function SceneBreakdown() {
   }
 
   // Show debug view if we have messages but no scenes were extracted
-  if (messages.length > 0 && scenes.length === 0 && !isProcessing) {
+  if (messages.length > 0 && (!scenes || !Array.isArray(scenes) || scenes.length === 0) && !isProcessing) {
     // Get the last few assistant messages
     const assistantMessages = messages
       .filter(m => m.role === 'assistant')
@@ -481,7 +481,7 @@ export default function SceneBreakdown() {
 
         {/* Scene list */}
         <div className="space-y-4">
-          {scenes.map((scene: Scene, index: number) => (
+          {Array.isArray(scenes) && scenes.map((scene: Scene, index: number) => (
             <SceneItem
               key={scene.id}
               scene={scene}
@@ -496,7 +496,7 @@ export default function SceneBreakdown() {
         </div>
 
         {/* Action buttons */}
-        {scenes.length > 0 && (
+        {scenes && Array.isArray(scenes) && scenes.length > 0 && (
           <div className="mt-8 flex justify-end">
             <Button
               onClick={handleGenerateVideo}
@@ -830,7 +830,7 @@ function getPromptFromStorage(): Prompt | null {
 function createLoadingMessage(): ChatMessage {
   return {
     role: 'assistant',
-    content: 'I\'m analyzing your prompt to break it down into scenes. This will help us create a well-structured video.',
+    content: "I'm analyzing your prompt to break it down into scenes. This will help us create a well-structured video.",
     timestamp: new Date()
   };
 }
@@ -841,7 +841,7 @@ function createLoadingMessage(): ChatMessage {
 function createVideoGenerationMessage(): ChatMessage {
   return {
     role: 'assistant',
-    content: 'I\'m starting the video generation process now. This will take a few minutes, but you can chat with me while you wait.',
+    content: "I'm starting the video generation process now. This will take a few minutes, but you can chat with me while you wait.",
     timestamp: new Date()
   };
 }

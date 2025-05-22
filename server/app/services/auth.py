@@ -165,5 +165,68 @@ class AuthService:
             logger.error(f"Error verifying Supabase token: {str(e)}")
             return None
 
+    async def get_current_user_ws(self, websocket) -> Optional[Dict[str, Any]]:
+        """
+        Get the current user from a WebSocket connection.
+        
+        Args:
+            websocket: The WebSocket connection
+            
+        Returns:
+            Optional[Dict[str, Any]]: User data if authenticated, None otherwise
+        """
+        try:
+            # Get the token from cookies
+            cookies = websocket.cookies
+            token = cookies.get("pixora_auth_token")
+            
+            if not token:
+                # Try to get token from query parameters as fallback
+                token = websocket.query_params.get("token")
+                
+            if not token:
+                logger.warning("WebSocket connection attempt without token")
+                return None
+            
+            # Verify the token
+            payload = self.verify_session_token(token)
+            
+            if not payload:
+                logger.warning("WebSocket connection attempt with invalid token")
+                return None
+                
+            logger.info(f"WebSocket connection authenticated for user: {payload['sub']}")
+            
+            # Return the user data
+            return {
+                "id": payload["sub"],
+                "email": payload.get("email", ""),
+                "name": payload.get("name", "")
+            }
+        except Exception as e:
+            logger.error(f"Error authenticating WebSocket connection: {str(e)}")
+            return None
+
 # Create a global instance of the authentication service
 auth_service = AuthService()
+
+# Helper function for FastAPI dependency injection
+async def get_current_user_ws(websocket) -> Optional[Dict[str, Any]]:
+    """
+    Get the current user from a WebSocket connection.
+    For use as a FastAPI dependency.
+    
+    Args:
+        websocket: The WebSocket connection
+        
+    Returns:
+        Optional[Dict[str, Any]]: User data if authenticated, None otherwise
+    """
+    user_data = await auth_service.get_current_user_ws(websocket)
+    
+    if not user_data:
+        # For WebSockets, we can't raise HTTPException directly
+        # The caller should handle this by closing the connection
+        return None
+    
+    return user_data

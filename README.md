@@ -19,17 +19,16 @@ pixora-ai/
 │   ├── public/          # Static assets
 │   └── dist/            # Build output (generated)
 │
-├── backend/             # Backend code (FastAPI)
+├── server/              # Backend code (FastAPI)
 │   ├── app/             # Application code
-│   │   ├── ai/          # AI-related functionality
-│   │   ├── auth/        # Authentication
-│   │   ├── core/        # Core functionality
+│   │   ├── agents/      # AI agents
+│   │   ├── api/         # API endpoints
 │   │   ├── models/      # Data models
-│   │   ├── routers/     # API endpoints
 │   │   ├── schemas/     # Pydantic models
 │   │   ├── services/    # Business logic
+│   │   ├── tools/       # AI tools
 │   │   └── utils/       # Utility functions
-│   ├── db/              # Database migrations and schema
+│   ├── sql/             # SQL scripts for database setup
 │   └── storage/         # Storage for uploaded files
 │
 └── docs/                # Documentation
@@ -48,14 +47,23 @@ npm run dev
 ### Backend
 
 ```bash
-cd backend
+cd server
 python -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your configuration
-python run.py
+python main.py
 ```
+
+### Database Setup
+
+To set up the database tables for conversation storage:
+
+1. Log in to your Supabase dashboard
+2. Navigate to the SQL Editor
+3. Copy the contents of `server/sql/create_conversation_tables.sql`
+4. Paste into the SQL Editor and run the script
 
 ### Full Stack Development
 
@@ -99,6 +107,7 @@ This project is set up for deployment to:
 - **Video Editing**: Edit generated videos in a timeline editor
 - **User Authentication**: Sign up, sign in, and manage user profiles
 - **Credits System**: Track and manage user credits for video generation
+- **Conversation Storage**: Persistent storage of conversations with the AI assistant for context retention
 
 ## Technologies Used
 
@@ -112,7 +121,8 @@ This project is set up for deployment to:
   - FastAPI
   - Supabase (Authentication, Database, Storage)
   - Pydantic (Data Validation)
-  - OpenAI, Fal.ai, Replicate (AI Services)
+  - OpenAI (AI Services)
+  - Persistent Conversation Storage (Supabase PostgreSQL)
 
 ## License
 

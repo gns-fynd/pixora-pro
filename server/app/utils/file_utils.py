@@ -15,46 +15,40 @@ from ..services.supabase import supabase_service
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Get storage bucket names from environment variables
-VIDEOS_BUCKET = os.getenv("STORAGE_VIDEOS_BUCKET", "videos")
-IMAGES_BUCKET = os.getenv("STORAGE_IMAGES_BUCKET", "images")
-AUDIO_BUCKET = os.getenv("STORAGE_AUDIO_BUCKET", "audio")
+# Get storage bucket name from environment variable
+STORAGE_BUCKET = os.getenv("STORAGE_BUCKET", "pixora")
 STORAGE_TYPE = os.getenv("STORAGE_TYPE", "supabase")
 
 def ensure_storage_buckets():
-    """Ensure all storage buckets exist in Supabase."""
+    """Ensure the storage bucket exists in Supabase."""
     if not hasattr(supabase_service, 'storage') or not supabase_service.storage:
-        logger.warning("Supabase storage not initialized. Cannot ensure buckets exist.")
+        logger.warning("Supabase storage not initialized. Cannot ensure bucket exists.")
         return
     
-    buckets = [VIDEOS_BUCKET, IMAGES_BUCKET, AUDIO_BUCKET]
-    
-    for bucket_name in buckets:
+    try:
+        # Check if the bucket exists
         try:
-            # Check if the bucket exists
-            try:
-                all_buckets = supabase_service.storage.list_buckets()
-                bucket_exists = any(bucket["name"] == bucket_name for bucket in all_buckets)
-            except Exception as e:
-                logger.warning(f"Error listing buckets: {str(e)}")
-                # Assume bucket doesn't exist if we can't list buckets
-                bucket_exists = False
-            
-            # Create the bucket if it doesn't exist
-            if not bucket_exists:
-                try:
-                    supabase_service.storage.create_bucket(bucket_name, {"public": True})
-                    logger.info(f"Created Supabase storage bucket: {bucket_name}")
-                except Exception as e:
-                    logger.warning(f"Error creating bucket {bucket_name}: {str(e)}")
-                    # Continue with next bucket even if this one fails
+            all_buckets = supabase_service.storage.list_buckets()
+            bucket_exists = any(bucket["name"] == STORAGE_BUCKET for bucket in all_buckets)
         except Exception as e:
-            logger.error(f"Error ensuring bucket {bucket_name} exists: {str(e)}")
+            logger.warning(f"Error listing buckets: {str(e)}")
+            # Assume bucket doesn't exist if we can't list buckets
+            bucket_exists = False
+        
+        # Create the bucket if it doesn't exist
+        if not bucket_exists:
+            try:
+                supabase_service.storage.create_bucket(STORAGE_BUCKET, {"public": True})
+                logger.info(f"Created Supabase storage bucket: {STORAGE_BUCKET}")
+            except Exception as e:
+                logger.warning(f"Error creating bucket {STORAGE_BUCKET}: {str(e)}")
+    except Exception as e:
+        logger.error(f"Error ensuring bucket {STORAGE_BUCKET} exists: {str(e)}")
 
 # Call this function to ensure buckets exist
 ensure_storage_buckets()
 
-def get_file_url(storage_path: str, bucket_name: str = VIDEOS_BUCKET) -> str:
+def get_file_url(storage_path: str, bucket_name: str = STORAGE_BUCKET) -> str:
     """
     Get the public URL for a file in Supabase storage.
     
@@ -123,7 +117,7 @@ def get_music_storage_path(task_storage_path: str) -> str:
     # Return the storage path
     return f"{task_storage_path}/music"
 
-def save_file(file_content: bytes, storage_path: str, bucket_name: str = VIDEOS_BUCKET) -> Dict[str, Any]:
+def save_file(file_content: bytes, storage_path: str, bucket_name: str = STORAGE_BUCKET) -> Dict[str, Any]:
     """
     Save a file to Supabase storage.
     
@@ -411,7 +405,7 @@ def save_script(task_storage_path: str, script_content: Dict[str, Any]) -> Dict[
 
 def save_uploaded_file(file_content: bytes, file_name: Optional[str] = None) -> Dict[str, Any]:
     """
-    Save an uploaded file to the uploads bucket.
+    Save an uploaded file to the uploads directory.
     
     Args:
         file_content: Content of the file
@@ -429,10 +423,10 @@ def save_uploaded_file(file_content: bytes, file_name: Optional[str] = None) -> 
         extension = os.path.splitext(file_name)[1]
     
     # Create the storage path
-    storage_path = f"{file_id}{extension}"
+    storage_path = f"uploads/{file_id}{extension}"
     
     # Save the file
-    result = save_file(file_content, storage_path, IMAGES_BUCKET)
+    result = save_file(file_content, storage_path)
     
     # Add additional metadata
     result["type"] = "uploaded_file"
@@ -454,7 +448,7 @@ def download_file(file_url: str) -> Optional[bytes]:
     # Check if the URL is a Supabase URL
     if supabase_service.storage and (
         "supabase" in file_url or 
-        file_url.startswith(supabase_service.url)
+        (supabase_service.url and file_url.startswith(supabase_service.url))
     ):
         # Extract the bucket and path from the URL
         # This is a simplified approach and might need to be adjusted based on the actual URL format
@@ -484,7 +478,7 @@ def download_file(file_url: str) -> Optional[bytes]:
     # If all methods failed, return None
     return None
 
-def delete_file(storage_path: str, bucket_name: str = VIDEOS_BUCKET) -> bool:
+def delete_file(storage_path: str, bucket_name: str = STORAGE_BUCKET) -> bool:
     """
     Delete a file from Supabase storage.
     
@@ -508,7 +502,7 @@ def delete_file(storage_path: str, bucket_name: str = VIDEOS_BUCKET) -> bool:
         logger.error(f"Error deleting file from Supabase storage: {str(e)}")
         return False
 
-def delete_directory(storage_path: str, bucket_name: str = VIDEOS_BUCKET) -> bool:
+def delete_directory(storage_path: str, bucket_name: str = STORAGE_BUCKET) -> bool:
     """
     Delete a directory and all its contents from Supabase storage.
     
@@ -560,7 +554,7 @@ def get_task_storage_path_from_id(task_id: str) -> str:
     try:
         # List all directories in the tasks directory
         try:
-            response = supabase_service.storage.from_(VIDEOS_BUCKET).list("tasks")
+            response = supabase_service.storage.from_(STORAGE_BUCKET).list("tasks")
             
             # Find the directory that ends with the task ID
             for item in response:

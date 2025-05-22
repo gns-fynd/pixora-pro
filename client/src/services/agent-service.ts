@@ -1,4 +1,3 @@
-import { apiClient } from './api-client';
 import useAuthStore from '@/store/use-auth-store';
 
 /**
@@ -432,18 +431,18 @@ export class AgentService {
       }>((resolve, reject) => {
         // Ensure WebSocket is connected
         if (!AgentService.socket || AgentService.socket.readyState !== WebSocket.OPEN) {
-          // If not connected, fall back to REST API
-          console.log(`WebSocket not connected, falling back to REST API for task ${taskId}`);
-          apiClient.get<{
-            status: string;
-            progress: number;
-            message?: string;
-            video_url?: string;
-          }>(`/api/chat/tasks/${taskId}/status`)
-            .then(resolve)
+          // If not connected, try to connect
+          console.log(`WebSocket not connected, attempting to connect for task ${taskId}`);
+          this.connect()
+            .then(() => {
+              // After connecting, send the task status request
+              this.getTaskStatus(taskId)
+                .then(resolve)
+                .catch(reject);
+            })
             .catch(error => {
-              console.error(`Error getting task status for task ${taskId} via REST API:`, error);
-              reject(error);
+              console.error(`Error connecting WebSocket for task ${taskId}:`, error);
+              reject(new Error('WebSocket connection failed. Please try again.'));
             });
           return;
         }
@@ -480,19 +479,9 @@ export class AgentService {
             AgentService.taskStatusHandlers.delete(taskId);
             AgentService.handlers.get('task_status')?.delete(handler);
 
-            // Fall back to REST API
-            console.log(`WebSocket task status request timed out for task ${taskId}, falling back to REST API`);
-            apiClient.get<{
-              status: string;
-              progress: number;
-              message?: string;
-              video_url?: string;
-            }>(`/api/chat/tasks/${taskId}/status`)
-              .then(resolve)
-              .catch(error => {
-                console.error(`Error getting task status for task ${taskId} via REST API:`, error);
-                reject(error);
-              });
+            // Reject with timeout error
+            console.log(`WebSocket task status request timed out for task ${taskId}`);
+            reject(new Error('WebSocket request timed out. Please try again.'));
           }
         }, 5000); // 5 second timeout
 

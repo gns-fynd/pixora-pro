@@ -2,11 +2,13 @@
 Supabase service for Pixora AI Video Creation Platform
 """
 import os
+import uuid
 from typing import Dict, Any, Optional, List, Union
 import logging
 import httpx
 import json
 from pathlib import Path
+from datetime import datetime
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -245,7 +247,7 @@ class SupabaseService:
             
             # Add metadata if provided
             if metadata:
-                update_data["metadata"] = metadata
+                update_data["metadata"] = json.dumps(metadata)
             
             # Update the task in the database
             response = httpx.patch(
@@ -365,6 +367,418 @@ class SupabaseService:
         except Exception as e:
             logger.error(f"Error getting user tasks: {str(e)}")
             return []
+    
+    # Conversation Management Methods
+    
+    def create_conversation(self, user_id: str, video_id: Optional[str] = None, 
+                           metadata: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """
+        Create a new conversation in the database.
+        
+        Args:
+            user_id: ID of the user
+            video_id: Optional ID of the associated video
+            metadata: Optional metadata for the conversation
+            
+        Returns:
+            Optional[str]: ID of the created conversation, or None if creation failed
+        """
+        if not self.url:
+            logger.warning("Supabase URL not set. Cannot create conversation.")
+            return None
+        
+        try:
+            # Create the conversation data
+            conversation_data = {
+                "user_id": user_id,
+                "updated_at": datetime.now().isoformat()
+            }
+            
+            # Add video_id if provided
+            if video_id:
+                conversation_data["video_id"] = video_id
+            
+            # Add metadata if provided
+            if metadata:
+                conversation_data["metadata"] = json.dumps(metadata)
+            
+            # Insert the conversation into the database
+            response = httpx.post(
+                f"{self.url}/rest/v1/conversations",
+                headers=self.admin_headers,
+                json=conversation_data
+            )
+            
+            # Check if the insertion was successful
+            if response.status_code == 201:
+                # Get the ID of the created conversation
+                # Supabase returns the ID in the Location header
+                location = response.headers.get("Location")
+                if location:
+                    # Extract the ID from the Location header
+                    conversation_id = location.split("/")[-1]
+                    logger.info(f"Created conversation: {conversation_id}")
+                    return conversation_id
+                
+                # If Location header is not available, query the database
+                logger.warning("Location header not found in response, querying database")
+                
+                # Query the database for the most recent conversation
+                get_response = httpx.get(
+                    f"{self.url}/rest/v1/conversations?user_id=eq.{user_id}&order=created_at.desc&limit=1",
+                    headers=self.admin_headers
+                )
+                
+                if get_response.status_code == 200:
+                    conversations = get_response.json()
+                    if conversations and len(conversations) > 0:
+                        conversation_id = conversations[0]["id"]
+                        logger.info(f"Retrieved conversation ID: {conversation_id}")
+                        return conversation_id
+                
+                logger.warning("Could not retrieve conversation ID")
+                return None
+            else:
+                logger.error(f"Error creating conversation: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Error creating conversation: {str(e)}")
+            return None
+    
+    def get_conversation(self, conversation_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get conversation data from the database.
+        
+        Args:
+            conversation_id: ID of the conversation
+            
+        Returns:
+            Optional[Dict[str, Any]]: Conversation data if found, None otherwise
+        """
+        if not self.url:
+            logger.warning("Supabase URL not set. Cannot get conversation.")
+            return None
+        
+        try:
+            # Query the conversations table
+            response = httpx.get(
+                f"{self.url}/rest/v1/conversations?id=eq.{conversation_id}&select=*",
+                headers=self.admin_headers
+            )
+            
+            # Return the conversation data
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    return data[0]
+                else:
+                    logger.warning(f"Conversation not found: {conversation_id}")
+                    return None
+            else:
+                logger.error(f"Error getting conversation: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Error getting conversation: {str(e)}")
+            return None
+    
+    def get_user_conversations(self, user_id: str, limit: int = 10, offset: int = 0) -> List[Dict[str, Any]]:
+        """
+        Get a list of conversations for a user.
+        
+        Args:
+            user_id: ID of the user
+            limit: Maximum number of conversations to return
+            offset: Offset for pagination
+            
+        Returns:
+            List[Dict[str, Any]]: List of conversation data
+        """
+        if not self.url:
+            logger.warning("Supabase URL not set. Cannot get user conversations.")
+            return []
+        
+        try:
+            # Query the conversations table
+            response = httpx.get(
+                f"{self.url}/rest/v1/conversations?user_id=eq.{user_id}&order=updated_at.desc&limit={limit}&offset={offset}",
+                headers=self.admin_headers
+            )
+            
+            # Return the conversation data
+            if response.status_code == 200:
+                return response.json() or []
+            else:
+                logger.error(f"Error getting user conversations: {response.status_code} - {response.text}")
+                return []
+        except Exception as e:
+            logger.error(f"Error getting user conversations: {str(e)}")
+            return []
+    
+    def add_message(self, conversation_id: str, role: str, content: str, 
+                   name: Optional[str] = None, function_call: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """
+        Add a message to a conversation.
+        
+        Args:
+            conversation_id: ID of the conversation
+            role: Role of the message sender ('system', 'user', 'assistant', 'function')
+            content: Content of the message
+            name: Optional name for function messages
+            function_call: Optional function call data for assistant messages
+            
+        Returns:
+            Optional[str]: ID of the created message, or None if creation failed
+        """
+        if not self.url:
+            logger.warning("Supabase URL not set. Cannot add message.")
+            return None
+        
+        try:
+            # Get the current sequence order
+            sequence_response = httpx.get(
+                f"{self.url}/rest/v1/conversation_messages?conversation_id=eq.{conversation_id}&select=sequence_order&order=sequence_order.desc&limit=1",
+                headers=self.admin_headers
+            )
+            
+            # Determine the next sequence order
+            next_sequence = 1
+            if sequence_response.status_code == 200:
+                data = sequence_response.json()
+                if data and len(data) > 0:
+                    next_sequence = data[0]["sequence_order"] + 1
+            
+            # Create the message data
+            message_data = {
+                "conversation_id": conversation_id,
+                "role": role,
+                "content": content,
+                "sequence_order": next_sequence
+            }
+            
+            # Add name if provided
+            if name:
+                message_data["name"] = name
+            
+            # Add function_call if provided
+            if function_call:
+                message_data["function_call"] = json.dumps(function_call)
+            
+            # Insert the message into the database
+            response = httpx.post(
+                f"{self.url}/rest/v1/conversation_messages",
+                headers=self.admin_headers,
+                json=message_data
+            )
+            
+            # Update the conversation's updated_at timestamp
+            self._update_conversation_timestamp(conversation_id)
+            
+            # Check if the insertion was successful
+            if response.status_code == 201:
+                # Get the ID of the created message
+                location = response.headers.get("Location")
+                if location:
+                    # Extract the ID from the Location header
+                    message_id = location.split("/")[-1]
+                    return message_id
+                
+                logger.warning("Location header not found in response")
+                return None
+            else:
+                logger.error(f"Error adding message: {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Error adding message: {str(e)}")
+            return None
+    
+    def get_conversation_messages(self, conversation_id: str) -> List[Dict[str, Any]]:
+        """
+        Get all messages for a conversation.
+        
+        Args:
+            conversation_id: ID of the conversation
+            
+        Returns:
+            List[Dict[str, Any]]: List of message data
+        """
+        if not self.url:
+            logger.warning("Supabase URL not set. Cannot get conversation messages.")
+            return []
+        
+        try:
+            # Query the conversation_messages table
+            response = httpx.get(
+                f"{self.url}/rest/v1/conversation_messages?conversation_id=eq.{conversation_id}&order=sequence_order.asc",
+                headers=self.admin_headers
+            )
+            
+            # Return the message data
+            if response.status_code == 200:
+                return response.json() or []
+            else:
+                logger.error(f"Error getting conversation messages: {response.status_code} - {response.text}")
+                return []
+        except Exception as e:
+            logger.error(f"Error getting conversation messages: {str(e)}")
+            return []
+    
+    def update_conversation_metadata(self, conversation_id: str, metadata: Dict[str, Any]) -> bool:
+        """
+        Update the metadata for a conversation.
+        
+        Args:
+            conversation_id: ID of the conversation
+            metadata: New metadata for the conversation
+            
+        Returns:
+            bool: True if the update was successful, False otherwise
+        """
+        if not self.url:
+            logger.warning("Supabase URL not set. Cannot update conversation metadata.")
+            return False
+        
+        try:
+            # Update the conversation metadata
+            response = httpx.patch(
+                f"{self.url}/rest/v1/conversations?id=eq.{conversation_id}",
+                headers=self.admin_headers,
+                json={
+                    "metadata": json.dumps(metadata),
+                    "updated_at": datetime.now().isoformat()
+                }
+            )
+            
+            # Return success
+            return response.status_code == 204
+        except Exception as e:
+            logger.error(f"Error updating conversation metadata: {str(e)}")
+            return False
+    
+    def _update_conversation_timestamp(self, conversation_id: str) -> bool:
+        """
+        Update the updated_at timestamp for a conversation.
+        
+        Args:
+            conversation_id: ID of the conversation
+            
+        Returns:
+            bool: True if the update was successful, False otherwise
+        """
+        if not self.url:
+            return False
+        
+        try:
+            # Update the conversation timestamp
+            response = httpx.patch(
+                f"{self.url}/rest/v1/conversations?id=eq.{conversation_id}",
+                headers=self.admin_headers,
+                json={"updated_at": datetime.now().isoformat()}
+            )
+            
+            # Return success
+            return response.status_code == 204
+        except Exception as e:
+            logger.error(f"Error updating conversation timestamp: {str(e)}")
+            return False
+    
+    def save_asset(self, task_id: str, asset_type: str, url: str, storage_path: str, 
+                  scene_index: Optional[int] = None, metadata: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """
+        Save an asset to the database.
+        
+        Args:
+            task_id: ID of the task
+            asset_type: Type of asset ('character', 'scene_image', 'audio', 'music', 'video')
+            url: URL of the asset
+            storage_path: Path to the asset in storage
+            scene_index: Optional index of the scene
+            metadata: Optional metadata for the asset
+            
+        Returns:
+            Optional[Dict[str, Any]]: Asset data if created, None otherwise
+        """
+        if not self.url:
+            logger.warning("Supabase URL not set. Cannot save asset.")
+            return None
+        
+        try:
+            # Create the asset data
+            asset_data = {
+                "id": str(uuid.uuid4()),
+                "task_id": task_id,
+                "asset_type": asset_type,
+                "url": url,
+                "storage_path": storage_path
+            }
+            
+            # Add scene_index if provided
+            if scene_index is not None:
+                asset_data["scene_index"] = str(scene_index)
+            
+            # Add metadata if provided
+            if metadata:
+                asset_data["metadata"] = json.dumps(metadata)
+            
+            # Insert the asset into the database
+            response = httpx.post(
+                f"{self.url}/rest/v1/assets",
+                headers=self.admin_headers,
+                json=asset_data
+            )
+            
+            # Return the asset data
+            if response.status_code == 201:
+                return asset_data
+            else:
+                logger.warning(f"Failed to save asset: {asset_data['id']} - {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Error saving asset: {str(e)}")
+            return None
+    
+    def save_video(self, task_id: str, url: str, storage_path: str, duration: float) -> Optional[Dict[str, Any]]:
+        """
+        Save a video to the database.
+        
+        Args:
+            task_id: ID of the task
+            url: URL of the video
+            storage_path: Path to the video in storage
+            duration: Duration of the video in seconds
+            
+        Returns:
+            Optional[Dict[str, Any]]: Video data if created, None otherwise
+        """
+        if not self.url:
+            logger.warning("Supabase URL not set. Cannot save video.")
+            return None
+        
+        try:
+            # Create the video data
+            video_data = {
+                "id": str(uuid.uuid4()),
+                "task_id": task_id,
+                "url": url,
+                "storage_path": storage_path,
+                "duration": duration
+            }
+            
+            # Insert the video into the database
+            response = httpx.post(
+                f"{self.url}/rest/v1/videos",
+                headers=self.admin_headers,
+                json=video_data
+            )
+            
+            # Return the video data
+            if response.status_code == 201:
+                return video_data
+            else:
+                logger.warning(f"Failed to save video: {video_data['id']} - {response.status_code} - {response.text}")
+                return None
+        except Exception as e:
+            logger.error(f"Error saving video: {str(e)}")
+            return None
     
     def download_file(self, path: str, bucket: Optional[str] = None) -> Optional[bytes]:
         """

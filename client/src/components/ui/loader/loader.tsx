@@ -37,6 +37,20 @@ export function Loader({
   message,
   className = '',
 }: LoaderProps) {
+  // Add event listener for the closeLoader event
+  useEffect(() => {
+    const handleCloseLoader = () => {
+      // Create a custom event to minimize the loader
+      const minimizeEvent = new CustomEvent('minimizeLoader');
+      window.dispatchEvent(minimizeEvent);
+    };
+    
+    window.addEventListener('closeLoader', handleCloseLoader);
+    
+    return () => {
+      window.removeEventListener('closeLoader', handleCloseLoader);
+    };
+  }, []);
   const [progress, setProgress] = useState(initialProgress);
   
   // Update progress when prop changes (if not auto-animating)
@@ -71,7 +85,20 @@ export function Loader({
   }, [autoAnimate, duration]);
   
   return (
-    <div className={`flex flex-col items-center ${className}`}>
+    <div className={`flex flex-col items-center relative ${className}`}>
+      <button 
+        className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+        onClick={() => {
+          // Create a custom event to minimize the loader
+          const event = new CustomEvent('minimizeLoader');
+          window.dispatchEvent(event);
+        }}
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
       <div className="relative w-64">
         <div className="h-5 w-full relative clip-path-inset-[-40px_0_-5px]">
           <div 

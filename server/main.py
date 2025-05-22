@@ -34,10 +34,10 @@ configure_logging(level=log_level, enable_json_logs=enable_json_logs, log_file=l
 logger = logging.getLogger(__name__)
 
 # Import API routers
-from app.api.chat import router as chat_router
 from app.api.auth import router as auth_router
 from app.api.users import router as users_router
 from app.api.videos import router as videos_router
+from app.api.chat import router as chat_router
 
 # Import services
 from app.services.auth import auth_service
@@ -105,10 +105,10 @@ async def log_requests(request: Request, call_next):
     return response
 
 # Include API routers
-app.include_router(chat_router)
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(videos_router)
+app.include_router(chat_router)
 
 # Health check endpoint
 @app.get("/api/health")
@@ -241,6 +241,20 @@ async def startup_event():
             logger.warning(f"Failed to ensure storage buckets: {str(e)}")
     else:
         logger.warning("Supabase not configured. Some features may not work properly.")
+    
+    # Initialize agents
+    try:
+        # Import agents
+        from app.agents.script_agent import script_agent
+        from app.agents.asset_agent import asset_agent
+        from app.agents.video_agent import video_agent
+        
+        # Log agent initialization
+        logger.info("Script agent initialized")
+        logger.info("Asset agent initialized")
+        logger.info("Video agent initialized")
+    except Exception as e:
+        logger.warning(f"Failed to initialize agents: {str(e)}")
     
     logger.info("Pixora AI API started successfully")
 

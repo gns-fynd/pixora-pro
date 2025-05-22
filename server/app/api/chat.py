@@ -8,11 +8,19 @@ from typing import Dict, Any, Optional, List
 import logging
 import json
 import asyncio
+import uuid
 
 # Import services
 from ..services.auth import auth_service
 from ..utils.websocket_manager import connection_manager
+from ..services.supabase import supabase_service
 from ..agents.chat_agent import chat_agent
+from ..agents.script_agent import script_agent
+from ..agents.asset_agent import asset_agent
+from ..agents.video_agent import video_agent
+
+# Import telemetry
+from ..utils.telemetry import traced, log_event
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -39,7 +47,8 @@ class ChatResponse(BaseModel):
 @router.post("", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
-    credentials: HTTPAuthorizationCredentials = Depends(security)
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    video_id: Optional[str] = None
 ):
     """
     Process a chat message and return a response.
@@ -57,8 +66,31 @@ async def chat(
         # Get the user ID from the token
         user_id = payload["sub"]
         
+        # Create a task for tracking if no task ID is provided
+        task_id = request.task_id
+        if not task_id:
+            task_id = connection_manager.create_task(
+                user_id=user_id,
+                task_type="chat",
+                metadata={"message": request.message, "video_id": video_id}
+            )
+        
+        # Update task status
+        connection_manager.update_task_status(
+            task_id,
+            "processing",
+            {"message": "Processing message..."}
+        )
+        
         # Process the message
-        response = await chat_agent.process_message(user_id, request.message, request.task_id)
+        response = await chat_agent.process_message(user_id, request.message, task_id, video_id)
+        
+        # Update task status
+        connection_manager.update_task_status(
+            task_id,
+            "completed",
+            {"message": response["content"]}
+        )
         
         # Return the response
         return ChatResponse(
@@ -87,33 +119,17 @@ async def websocket_endpoint(websocket: WebSocket):
         # Accept the connection first
         await websocket.accept()
         
-        # Get the token from cookies
-        cookies = websocket.cookies
-        token = cookies.get("pixora_auth_token")
+        # Authenticate the user
+        user_data = await auth_service.get_current_user_ws(websocket)
         
-        if not token:
-            # Try to get token from query parameters as fallback
-            token = websocket.query_params.get("token")
-            
-        if not token:
-            logger.warning("WebSocket connection attempt without token")
-            await websocket.send_json({"type": "error", "content": "Authentication token is required"})
-            await websocket.close()
-            return
-        
-        # Verify the token
-        payload = auth_service.verify_session_token(token)
-        
-        if not payload:
-            logger.warning("WebSocket connection attempt with invalid token")
-            await websocket.send_json({"type": "error", "content": "Invalid authentication token"})
+        if not user_data:
+            logger.warning("WebSocket connection authentication failed")
+            await websocket.send_json({"type": "error", "content": "Authentication failed"})
             await websocket.close()
             return
             
-        logger.info(f"WebSocket connection authenticated for user: {payload['sub']}")
-        
-        # Get the user ID from the token
-        user_id = payload["sub"]
+        # Get the user ID
+        user_id = user_data["id"]
         
         # Define the message handler
         async def handle_message(user_id: str, message_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -124,6 +140,9 @@ async def websocket_endpoint(websocket: WebSocket):
             # Extract context data
             context = message_data.get("context", {})
             
+            # Extract video_id if present
+            video_id = context.get("video_id")
+            
             # Log the message and context for debugging
             logger.info(f"Received message: {message_data['message'][:50]}... with context: {context}")
             
@@ -132,8 +151,8 @@ async def websocket_endpoint(websocket: WebSocket):
                 logger.info(f"Generating script with prompt: {context['prompt'][:50]}...")
                 
                 try:
-                    # Generate script with the prompt data
-                    script_data = await chat_agent._generate_script(
+                    # Generate script with the prompt data using script_agent
+                    script_data = await script_agent.create_script(
                         prompt=context["prompt"],
                         character_consistency=False,
                         duration=context.get("duration", 60),
@@ -143,10 +162,11 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     # Create a task for tracking
                     task_id = script_data["task_id"]
+                    # Create a task in the connection manager
                     connection_manager.create_task(
                         user_id=user_id,
                         task_type="scene_breakdown",
-                        metadata={"prompt": context["prompt"]}
+                        metadata={"prompt": context["prompt"], "task_id": task_id}
                     )
                     
                     # Update task status
@@ -195,11 +215,47 @@ async def websocket_endpoint(websocket: WebSocket):
                         "content": f"Failed to generate script: {str(e)}"
                     }
             
-            # If not a scene breakdown request or no prompt data, process normally
+            # Handle task status requests
+            if message_data.get("type") == "task_status" and message_data.get("task_id"):
+                task_id = message_data["task_id"]
+                logger.info(f"Received task status request for task {task_id} from user {user_id}")
+                
+                # Get the task
+                task = connection_manager.get_task(task_id)
+                
+                if not task:
+                    return {
+                        "type": "task_status",
+                        "task_id": task_id,
+                        "status": "error",
+                        "message": "Task not found"
+                    }
+                
+                # Check if the task belongs to the user
+                if task["user_id"] != user_id:
+                    return {
+                        "type": "task_status",
+                        "task_id": task_id,
+                        "status": "error",
+                        "message": "Access denied"
+                    }
+                
+                # Return the task status
+                return {
+                    "type": "task_status",
+                    "task_id": task_id,
+                    "status": task["status"],
+                    "progress": task.get("metadata", {}).get("progress", 0),
+                    "message": task.get("metadata", {}).get("message"),
+                    "video_url": task.get("metadata", {}).get("video_url")
+                }
+            
+            # If not a scene breakdown request or task status request, process normally
             response = await chat_agent.process_message(
                 user_id,
                 message_data["message"],
-                message_data.get("task_id")
+                message_data.get("task_id"),
+                video_id
             )
             
             # Update the task status if a task ID is present
@@ -212,90 +268,8 @@ async def websocket_endpoint(websocket: WebSocket):
             
             return response
         
-        # Connection is already accepted, no need to accept again
-        
-        # Handle messages directly without creating a separate connection
-        try:
-            # Send a welcome message directly
-            await websocket.send_json({
-                "type": "system",
-                "content": "Connected to Pixora AI WebSocket server"
-            })
-            
-            # Handle messages in a loop
-            while True:
-                # Receive a message
-                message = await websocket.receive_text()
-                
-                # Parse the message
-                try:
-                    message_data = json.loads(message)
-                    
-                    # Ensure context is properly formatted
-                    if "context" in message_data and message_data["context"] is None:
-                        message_data["context"] = {}
-                    
-                    # Handle task status requests
-                    if message_data.get("type") == "task_status" and message_data.get("task_id"):
-                        task_id = message_data["task_id"]
-                        logger.info(f"Received task status request for task {task_id} from user {user_id}")
-                        
-                        # Get the task
-                        task = connection_manager.get_task(task_id)
-                        
-                        if not task:
-                            await websocket.send_json({
-                                "type": "task_status",
-                                "task_id": task_id,
-                                "status": "error",
-                                "message": "Task not found"
-                            })
-                            continue
-                        
-                        # Check if the task belongs to the user
-                        if task["user_id"] != user_id:
-                            await websocket.send_json({
-                                "type": "task_status",
-                                "task_id": task_id,
-                                "status": "error",
-                                "message": "Access denied"
-                            })
-                            continue
-                        
-                        # Send the task status
-                        await websocket.send_json({
-                            "type": "task_status",
-                            "task_id": task_id,
-                            "status": task["status"],
-                            "progress": task.get("metadata", {}).get("progress", 0),
-                            "message": task.get("metadata", {}).get("message"),
-                            "video_url": task.get("metadata", {}).get("video_url")
-                        })
-                        continue
-                    
-                    # Handle regular messages
-                    response = await handle_message(user_id, message_data)
-                    
-                    # Send the response
-                    if response:
-                        await websocket.send_json(response)
-                
-                except json.JSONDecodeError:
-                    await websocket.send_json({
-                        "type": "error",
-                        "content": "Invalid JSON"
-                    })
-                    continue
-                except Exception as e:
-                    logger.error(f"Error handling message: {str(e)}")
-                    await websocket.send_json({
-                        "type": "error",
-                        "content": f"Error processing message: {str(e)}"
-                    })
-        except WebSocketDisconnect:
-            logger.info(f"WebSocket client disconnected: {user_id}")
-        except Exception as e:
-            logger.error(f"Error in WebSocket connection: {str(e)}")
+        # Use the connection manager to handle the WebSocket connection
+        await connection_manager.handle_websocket(websocket, user_id, handle_message)
     except WebSocketDisconnect:
         logger.info(f"WebSocket client disconnected")
     except Exception as e:
@@ -353,6 +327,147 @@ async def get_task_status(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get task status: {str(e)}"
+        )
+
+# Generate video endpoint
+@router.post("/generate-video")
+@traced("generate_video_endpoint")
+async def generate_video(
+    request: Dict[str, Any],
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+):
+    """
+    Generate a complete video from a script.
+    """
+    try:
+        # Verify the token
+        payload = auth_service.verify_session_token(credentials.credentials)
+        
+        if not payload:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid token"
+            )
+        
+        # Get the user ID from the token
+        user_id = payload["sub"]
+        
+        # Extract the script data from the request
+        script_data = request.get("script")
+        if not script_data:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Script data is required"
+            )
+        
+        # Extract the task ID from the request or generate a new one
+        task_id = request.get("task_id")
+        if not task_id:
+            task_id = str(uuid.uuid4())
+        
+        # Create a task for tracking
+        created_task_id = connection_manager.create_task(
+            user_id=user_id,
+            task_type="video_generation",
+            metadata={"prompt": script_data.get("rewritten_prompt", script_data.get("user_prompt", "")), "task_id": task_id}
+        )
+        
+        # Use the created task ID if we didn't have one
+        if not task_id:
+            task_id = created_task_id
+        
+        # Update task status
+        connection_manager.update_task_status(
+            task_id,
+            "processing",
+            {"message": "Generating assets..."}
+        )
+        
+        # Generate assets asynchronously
+        asyncio.create_task(
+            _generate_video_async(user_id, task_id, script_data)
+        )
+        
+        # Return the task ID
+        return {
+            "task_id": task_id,
+            "status": "processing",
+            "message": "Video generation started"
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error generating video: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate video: {str(e)}"
+        )
+
+# Asynchronous video generation function
+async def _generate_video_async(user_id: str, task_id: str, script_data: Dict[str, Any]):
+    """
+    Generate a video asynchronously.
+    """
+    try:
+        # Update task status
+        connection_manager.update_task_status(
+            task_id,
+            "processing",
+            {"message": "Generating character images...", "progress": 10}
+        )
+        
+        # Generate assets
+        assets = await asset_agent.generate_all_assets(
+            task_id=task_id,
+            script_data=script_data
+        )
+        
+        # Update task status
+        connection_manager.update_task_status(
+            task_id,
+            "processing",
+            {"message": "Generating scene videos...", "progress": 50}
+        )
+        
+        # Generate video
+        video_result = await video_agent.generate_video(
+            task_id=task_id,
+            script_data=script_data,
+            assets=assets
+        )
+        
+        # Update task status
+        connection_manager.update_task_status(
+            task_id,
+            "completed",
+            {
+                "message": "Video generation completed",
+                "progress": 100,
+                "video_url": video_result.get("final_video", {}).get("url")
+            }
+        )
+        
+        # Update the task in the database with the video result
+        if hasattr(supabase_service, 'client') and supabase_service.client:
+            supabase_service.update_task_status(
+                task_id=task_id,
+                status="completed",
+                metadata={
+                    "video_url": video_result.get("final_video", {}).get("url"),
+                    "prompt": script_data.get("rewritten_prompt", script_data.get("user_prompt", "")),
+                    "script": script_data,
+                    "assets": assets,
+                    "video": video_result
+                }
+            )
+    except Exception as e:
+        logger.error(f"Error generating video asynchronously: {str(e)}")
+        
+        # Update task status
+        connection_manager.update_task_status(
+            task_id,
+            "failed",
+            {"message": f"Video generation failed: {str(e)}"}
         )
 
 # User tasks endpoint
